@@ -1,10 +1,10 @@
 mod completions;
 pub mod grammar;
-mod pointer_bundle;
+mod buffer_pair;
 mod set_buffers;
 
 use completions::{Completions, CompletionsTransaction};
-use pointer_bundle::{Transfer, BufferPair};
+use buffer_pair::{Transfer, BufferPair};
 use set_buffers::{grow_ordered_set, isolate_new_elements, sorted_set};
 
 pub struct Node {
