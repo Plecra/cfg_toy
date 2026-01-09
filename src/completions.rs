@@ -1,4 +1,4 @@
-use super::{Completion, NtSymbol, State};
+use super::recognizer::{Completion, NtSymbol, State};
 /// Semantically, this is a `BTreeMap<(usize, NtSymbol), State<'a>>`
 /// It's implemented via a flat buffer containing all the entries in correct order,
 /// and the completion index for locating each value of `usize`. This
