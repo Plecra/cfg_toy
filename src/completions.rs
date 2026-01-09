@@ -3,7 +3,8 @@ use super::recognizer::{Completion, NtSymbol, State};
 /// It's implemented via a flat buffer containing all the entries in correct order,
 /// and the completion index for locating each value of `usize`. This
 /// provides range queries for `(i, sym)` efficiently.
-pub(crate) struct Completions<'a, Symbol> {
+#[derive(Debug)]
+pub struct Completions<'a, Symbol> {
     completions: Vec<Completion<'a, Symbol>>,
     completion_index: Vec<usize>,
 }

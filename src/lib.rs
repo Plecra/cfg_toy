@@ -20,6 +20,7 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
     cfg: &'c crate::grammar::Cfg<Symbol>,
     src: &[Symbol::Terminal],
     trace: &[(usize, usize, NtSymbol)],
+    completions: &crate::completions::Completions<'c, Symbol>,
     init_sym: &'c Symbol,
 ) -> Ast<'c, Symbol> {
     let mut ast = vec![];
@@ -35,8 +36,8 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
         let start = span.as_ptr() as usize - src.as_ptr() as usize;
         for rule in rules {
             let stack_len = stack.len();
-            println!("  trying rule {:?} for span {:?}", rule.parts, span);
-            if matched_rule(span, start, trace, &rule.parts, &mut stack, state_nt, span.len()) {
+            println!("  trying rule {state:?}{:?} for span {:?}", rule.parts, span);
+            if matched_rule(span, start, trace, completions, &rule.parts, &mut stack, state_nt, span.len()) {
                 if let Some((new_span, first_child)) = stack.last().filter(|_| stack_len + 1 == stack.len())
                     && let Err(new_nt) = first_child.as_part()
                     && new_nt == state_nt
@@ -87,10 +88,12 @@ impl CfgSymbol for u32 {
         }
     }
 }
+#[allow(clippy::too_many_arguments)]
 fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
     mut src: &'a [Symbol::Terminal],
     offset: usize,
     mut trace: &[(usize, usize, NtSymbol)],
+    completions: &crate::completions::Completions<'c, Symbol>,
     rule: &'c [Symbol],
     children: &mut Vec<(&'a [Symbol::Terminal], &'c Symbol)>,
     parent_sym: u32,
@@ -122,6 +125,9 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
                         // FIXME: This needs to work recursively again,
                         // if a rule is left/right recursive but hidden through another rule
                         && (s != parent_sym || (end - start) < parent_len)
+                        && completions
+                            .query(dbg!(start), sym)
+                            .any(|st| st.back_ref ==  offset && st.sym == parent_sym)
                     )
                 else {
                     return false;

@@ -47,12 +47,12 @@ fn main() {
     let src = "true then".as_bytes();
     let init_sym = 256;
     let mut trace = vec![];
-    cfg_toy::parse_earley(&mycfg, src, init_sym, &mut trace);
+    let completions = cfg_toy::parse_earley(&mycfg, src, init_sym, &mut trace);
     for &(start, end, state) in &trace {
         println!("{} {:?}", state_names[state as usize - 256], start..end);
     }
     trace.sort_by_key(|m| (m.1, m.2));
-    let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &init_sym);
+    let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &init_sym);
     println!("{ast:?}");
 
 
@@ -227,9 +227,9 @@ r#"[{}]"#
     let mut trace = vec![];
     let src = cfg_toy::cast_buf(&src);
     // panic!("{:?} {:?}", &src[215..220], &src[220..]);
-    cfg_toy::parse_earley(&json_cfg, src, init_sym.symbol, &mut trace);
+    let completions = cfg_toy::parse_earley(&json_cfg, src, init_sym.symbol, &mut trace);
     trace.sort_by_key(|m| (m.1, m.2));
-    let ast = cfg_toy::trace_to_ast(&json_cfg, src, &trace, &init_sym);
+    let ast = cfg_toy::trace_to_ast(&json_cfg, src, &trace, &completions, &init_sym);
     // for el in &ast {
     //     println!("{el:?}");
     // }
@@ -303,11 +303,12 @@ let (test_grammar, state_names) = cfg_toy::cfg! {
 let mut trace = vec![];
 let src = b"aaa";
     // let src = cfg_toy::cast_buf(src);
-    cfg_toy::parse_earley(&test_grammar, src, 256, &mut trace);
+    let completions = cfg_toy::parse_earley(&test_grammar, src, 256, &mut trace);
     for &(start, end, state) in &trace {
         println!("{} {:?}", state_names[state as usize - 256], start..end);
     }
+    println!("{:?}", completions);
     trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
-    let ast = cfg_toy::trace_to_ast(&test_grammar, src, &trace, &256);
+    let ast = cfg_toy::trace_to_ast(&test_grammar, src, &trace, &completions, &256);
     println!("{ast:?}");
 }

@@ -30,8 +30,8 @@ pub(crate) type NtSymbol = u32;
 pub(crate) type Completion<'a, Symbol> = (NtSymbol, State<'a, Symbol>);
 #[derive(Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub(crate) struct State<'a, Symbol> {
-    back_ref: usize,
-    sym: NtSymbol,
+    pub(crate) back_ref: usize,
+    pub(crate) sym: NtSymbol,
     remaining: &'a [Symbol],
 }
 impl<'a, Symbol> Clone for State<'a, Symbol> {
@@ -59,12 +59,12 @@ struct EarleyStep<'c, 'r, T, Symbol: Ord + super::CfgSymbol> {
     next_states: Vec<State<'c, Symbol>>,
     trace: T,
 }
-pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
-    cfg: &crate::grammar::Cfg<Symbol>,
-    src: &[Symbol::Terminal],
+pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
+    cfg: &'c crate::grammar::Cfg<Symbol>,
+    src: &'c [Symbol::Terminal],
     init_sym: u32,
     mut trace: impl Trace,
-) {
+) -> Completions<'c, Symbol> {
     let mut states = cfg
         .rules_for(init_sym)
         .map(|r| mk_state(0, init_sym, &r.parts[..]))
@@ -119,6 +119,7 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
             panic!("no states left at cursor {}", cursor);
         }
     }
+    let mut completions_tx = completions.add_group();
     grow_ordered_set(&mut states, |mut states| {
         for i in 0..states.read().len() {
             let state = states.read()[i].clone();
@@ -127,14 +128,21 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
                 trace.at(src.len()).completed(state.back_ref, state.sym);
                 states
                     .write()
-                    .extend(completions.query(state.back_ref, state.sym));
+                    .extend(completions_tx.query(state.back_ref, state.sym));
                 continue;
             } else {
                 let sym = state.remaining.first().unwrap();
                 match sym.as_part() {
                     super::Either::Ok(_) => (),
                     super::Either::Err(nt) => {
-                        let can_skip = cfg.rules_for(nt).any(|rule| rule.parts.is_empty());
+                        // Synthesize a completion that'll never be used,
+                        // we still need to indicate that ws is a valid child for us
+                        completions_tx.push((
+                            nt,
+                            mk_state(state.back_ref, state.sym, &state.remaining[1..]),
+                        ));
+                        // FIXME: transitive please
+                        let can_skip = cfg.rules_for(nt).any(|rule| dbg!(rule).parts.is_empty());
                         if can_skip {
                             trace.at(src.len()).completed(src.len(), nt);
                             states.write().push(mk_state(
@@ -148,12 +156,14 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
             }
         }
     });
+    drop(completions_tx);
     // the match state is (back_ref: 0, sym: 256), so will always be at the start
     // println!("final states: {:?}", states);
     assert_eq!(
         states.first().map(|s| (s.back_ref, s.sym)),
         Some((0, init_sym))
     );
+    completions
 }
 impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbol> {
     fn expand_states(&mut self, mut transfer: impl BufferPair<State<'c, Symbol>>) {
