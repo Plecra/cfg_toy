@@ -76,8 +76,11 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
 
     // TODO: The completions should sorta have a GC pass. Especially for longer files,
     // most of its content is completely unreferenced.
+    // Currently using binary search maps due to the need for range queries, it'd be totally sensible
+    // to revisit that
     let mut completions: Vec<Completion> = vec![];
-    let mut completion_ends: Vec<usize> = Vec::with_capacity(src.len());
+    let mut completion_index: Vec<usize> = Vec::with_capacity(src.len());
+    completion_index.push(0);
     
     for cursor in 0..src.len() {
         println!("@{cursor} {states:?}");
@@ -85,7 +88,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         let mut next_states = vec![];
         let mut new_states = vec![];
         let mut states_before_pass = new_states.len();
-        expand_states(&mut states, 0, &mut new_states, |_, r| r, base, &mut completions, &mut completion_ends, &mut next_states, cfg, cursor, src);
+        expand_states(&mut states, 0, &mut new_states, |_, r| r, &mut completions, &mut completion_index, &mut next_states, cfg, cursor, src);
         'done: loop {
         for _ in 0..120 {
             let i = states_before_pass;
@@ -97,7 +100,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
                 break 'done;
             }
             states_before_pass = new_states.len();
-            expand_states(&mut new_states, i, &mut Vec::new(), |r, _| r, base, &mut completions, &mut completion_ends, &mut next_states, cfg, cursor, src);
+            expand_states(&mut new_states, i, &mut Vec::new(), |r, _| r, &mut completions, &mut completion_index, &mut next_states, cfg, cursor, src);
             new_states[..states_before_pass].sort();
         }
         panic!("recursion limit?");
@@ -107,8 +110,8 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         let new_len = dedup(&mut states, |s| s);
         states.truncate(new_len);
         completions[base..].sort();
-        completion_ends.push(completions.len());
-        completion_ends.resize(completions.len(), 0);
+        completion_index.push(completions.len());
+        // completion_index.resize(completions.len(), 0);
     }
     // println!("{:?}", states);
     {
@@ -131,8 +134,9 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
                     i += 1;
                     continue;
                 }
-                let end  = completion_ends[state.back_ref];
-                let start_of_comps = state.back_ref + completions[state.back_ref..end]
+                let start = completion_index[state.back_ref];
+                let end = completion_index[state.back_ref + 1];
+                let start_of_comps = start + completions[start..end]
                     .partition_point(|c| c.0 < state.sym);
                 states.extend(completions[start_of_comps..]
                     .iter()
@@ -165,9 +169,8 @@ fn expand_states<'c>(
     mut i: usize,
     new_states: &mut Vec<State<'c>>,
     ref_new_states: impl for<'a, 'b> Fn(&'a mut Vec<State<'b>>, &'a mut Vec<State<'b>>) -> &'a mut Vec<State<'b>>,
-    base: usize,
     completions: &mut Vec<Completion<'c>>,
-    completion_ends: &mut Vec<usize>,
+    completion_index: &mut Vec<usize>,
     next_states: &mut Vec<State<'c>>,
     cfg: &'c Cfg,
     cursor: usize,
@@ -177,10 +180,9 @@ fn expand_states<'c>(
     while i < len {
         let state = states[i];
         let Some(&sym) = state.remaining.get(0) else {
-            let end  = completion_ends[state.back_ref];
-            let start_of_comps = state.back_ref + completions[
-                state.back_ref..end
-                ]
+            let start = completion_index[state.back_ref];
+            let end = completion_index[state.back_ref + 1];
+            let start_of_comps = start + completions[start..end]
                 .partition_point(|c| c.0 < state.sym);
             let new = ref_new_states(states, new_states);
             new.extend(completions[start_of_comps..]
@@ -203,7 +205,7 @@ fn expand_states<'c>(
             ref_new_states(states, new_states).extend(cfg
                 .rules[rules..].iter()
                 .take_while(|r| r.for_nt == sym)
-                .map(|r| State(base, sym, &r.parts[..])));
+                .map(|r| State(cursor, sym, &r.parts[..])));
         }
         i += 1;
     }
