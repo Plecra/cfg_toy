@@ -7,6 +7,17 @@ struct Rule {
 struct Cfg {
     rules: Vec<Rule>,
 }
+impl Cfg {
+    fn rules_for(&self, nt: u32) -> &[Rule] {
+        let start = self.rules.partition_point(|r| r.for_nt < nt);
+        let end = self.rules.partition_point(|r| r.for_nt <= nt);
+        // TODO: bench? this is the same as iterating while we're in the group
+        // self
+        //     .rules[start..].iter()
+        //     .take_while(|r| r.for_nt == init_sym)
+        &self.rules[start..end]
+    }
+}
 macro_rules! cfg_rules {
     {$cx:ident $rule_name:ident $($t:tt)*} => {
         $cx.1.push($rule_name);
@@ -65,12 +76,40 @@ struct State<'a> {
 fn State(back_ref: usize, sym: NtSymbol, remaining: &[u32]) -> State<'_> {
     State { back_ref, sym, remaining }
 }
+
+// Here's some unfortunate complexity, this boilerplate is just responsible
+// for allowing us to read + write to the same reference.
+trait StateGrouping<'c> {
+    fn read(&self) -> &Vec<State<'c>>;
+    fn write(&mut self) -> &mut Vec<State<'c>>;
+}
+impl<'a, 'b> StateGrouping<'b> for &'a mut Vec<State<'b>> {
+    fn read(&self) -> &Vec<State<'b   >> {
+        self
+    }
+    fn write(&mut self) -> &mut Vec<State<'b>> {
+        self
+    }
+}
+struct FromOldStates<'a, 'c> {
+    states: &'a Vec<State<'c>>,
+    new_states: &'a mut Vec<State<'c>>,
+}
+impl<'a, 'b> StateGrouping<'b> for FromOldStates<'a, 'b> {
+    fn read(&self) -> &Vec<State<'b>> {
+        self.states
+    }
+    fn write(&mut self) -> &mut Vec<State<'b>> {
+        self.new_states
+    }
+}
+
+
+
 fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
-    let init_rules = cfg.rules.partition_point(|r| r.for_nt < init_sym);
-    
     let mut states = cfg
-        .rules[init_rules..].iter()
-        .take_while(|r| r.for_nt == init_sym)
+        .rules_for(init_sym)
+        .iter()
         .map(|r| State(0, init_sym, &r.parts[..]))
         .collect::<Vec<_>>();
 
@@ -88,22 +127,30 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         let mut next_states = vec![];
         let mut new_states = vec![];
         let mut states_before_pass = new_states.len();
-        expand_states(&mut states, 0, &mut new_states, |_, r| r, &mut completions, &mut completion_index, &mut next_states, cfg, cursor, src);
-        'done: loop {
-        for _ in 0..120 {
+        expand_states(FromOldStates { states: &states, new_states: &mut new_states }, 0, &mut completions, &mut completion_index, &mut next_states, cfg, cursor, src);
+        
+        let mut loop_check = {
+            let mut iters = 0;
+            move || {
+                iters += 1;
+                if 120 <= iters {
+                    panic!("recursion limit?");
+                }
+            }
+        };
+        loop {
             let i = states_before_pass;
             let (sorted, appended) = new_states.split_at_mut(i);
             appended.sort();
             let new_len = dedup_wrt(appended, sorted, |s| s);
             new_states.truncate(i + new_len);
             if states_before_pass == new_states.len() {
-                break 'done;
+                break;
             }
             states_before_pass = new_states.len();
-            expand_states(&mut new_states, i, &mut Vec::new(), |r, _| r, &mut completions, &mut completion_index, &mut next_states, cfg, cursor, src);
+            expand_states(&mut new_states, i, &mut completions, &mut completion_index, &mut next_states, cfg, cursor, src);
             new_states[..states_before_pass].sort();
-        }
-        panic!("recursion limit?");
+            loop_check();
         }
         states = next_states;
         states.sort();
@@ -111,9 +158,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         states.truncate(new_len);
         completions[base..].sort();
         completion_index.push(completions.len());
-        // completion_index.resize(completions.len(), 0);
     }
-    // println!("{:?}", states);
     {
         // algo sketch:
         // loop
@@ -142,7 +187,6 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
                     .iter()
                     .take_while(|c| c.0 == state.sym)
                     .map(|c| c.1));
-                // println!("{state:?}");
                 i += 1;
             }
             states[..pending_end].sort();
@@ -165,10 +209,8 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     vec![]
 }
 fn expand_states<'c>(
-    states: &mut Vec<State<'c>>,
-    mut i: usize,
-    new_states: &mut Vec<State<'c>>,
-    ref_new_states: impl for<'a, 'b> Fn(&'a mut Vec<State<'b>>, &'a mut Vec<State<'b>>) -> &'a mut Vec<State<'b>>,
+    mut transfer: impl StateGrouping<'c>,
+    i: usize,
     completions: &mut Vec<Completion<'c>>,
     completion_index: &mut Vec<usize>,
     next_states: &mut Vec<State<'c>>,
@@ -176,20 +218,18 @@ fn expand_states<'c>(
     cursor: usize,
     src: &[u8],
 ) {
-    let len = states.len();
-    while i < len {
-        let state = states[i];
+    for i in i..transfer.read().len() {
+        let state = transfer.read()[i];
         let Some(&sym) = state.remaining.get(0) else {
             let start = completion_index[state.back_ref];
             let end = completion_index[state.back_ref + 1];
             let start_of_comps = start + completions[start..end]
                 .partition_point(|c| c.0 < state.sym);
-            let new = ref_new_states(states, new_states);
+            let new = transfer.write();
             new.extend(completions[start_of_comps..]
                 .iter()
                 .take_while(|c| c.0 == state.sym)
                 .map(|c| c.1));
-            i += 1;
             continue;
         };
         if sym < 256 {
@@ -202,12 +242,11 @@ fn expand_states<'c>(
             let rules = cfg.rules.partition_point(|r| r.for_nt < sym);
             
             completions.push((sym, State(state.back_ref, state.sym, &state.remaining[1..])));
-            ref_new_states(states, new_states).extend(cfg
+            transfer.write().extend(cfg
                 .rules[rules..].iter()
                 .take_while(|r| r.for_nt == sym)
                 .map(|r| State(cursor, sym, &r.parts[..])));
         }
-        i += 1;
     }
 }
 fn dedup<T, K: PartialEq>(slice: &mut [T], key: impl Fn(&T) -> &K) -> usize {
