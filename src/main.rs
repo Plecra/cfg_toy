@@ -8,14 +8,14 @@ struct Cfg {
     rules: Vec<Rule>,
 }
 impl Cfg {
-    fn rules_for(&self, nt: u32) -> &[Rule] {
+    fn rules_for(&self, nt: u32) -> impl Iterator<Item = &'_ Rule> + '_ {
         let start = self.rules.partition_point(|r| r.for_nt < nt);
         let end = self.rules.partition_point(|r| r.for_nt <= nt);
         // TODO: bench? this is the same as iterating while we're in the group
         // self
         //     .rules[start..].iter()
-        //     .take_while(|r| r.for_nt == init_sym)
-        &self.rules[start..end]
+        //     .take_while(|r| r.for_nt == nt)
+        self.rules[start..end].iter()
     }
 }
 macro_rules! cfg_rules {
@@ -117,6 +117,9 @@ struct Completions<'a> {
     completion_index: Vec<usize>,
 }
 impl<'a> Completions<'a> {
+    fn add_group(&mut self) -> CompletionsTransaction<'a, '_> {
+        CompletionsTransaction::new(self)
+    }
     fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
         let start = self.completion_index[back_ref];
         let end = self.completion_index[back_ref + 1];
@@ -127,10 +130,42 @@ impl<'a> Completions<'a> {
             .map(|c| c.1)
     }
 }
+// Appending a new group to the Completions buffer needs to be careful to
+// clean up once it's done, which this type is responsible for.
+struct CompletionsTransaction<'a, 'b> {
+    completions: &'b mut Completions<'a>,
+    start_len: usize,
+}
+impl<'a, 'b> CompletionsTransaction<'a, 'b> {
+    fn new(completions: &'b mut Completions<'a>) -> Self {
+        let start_len = completions.completions.len();
+        Self {
+            completions,
+            start_len,
+        }
+    }
+    fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
+        self.completions.query(back_ref, sym)
+    }
+    fn push(&mut self, completion: Completion<'a>) {
+        self.completions.completions.push(completion);
+    }
+}
+impl<'a, 'b> Drop for CompletionsTransaction<'a, 'b> {
+    fn drop(&mut self) {
+        // let end_len = self.completions.completions.len();
+        // self.completions
+        //     .completion_index
+        //     .push(end_len);
+        self.completions.completions[self.start_len..].sort();
+        self.completions
+            .completion_index
+            .push(self.completions.completions.len());
+    }
+}
 fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut states = cfg
         .rules_for(init_sym)
-        .iter()
         .map(|r| State(0, init_sym, &r.parts[..]))
         .collect::<Vec<_>>();
 
@@ -149,7 +184,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
 
     for cursor in 0..src.len() {
         println!("@{cursor} {states:?}");
-        let base = completions.completions.len();
+        let mut completions_tx = completions.add_group();
         let mut next_states = vec![];
         let mut new_states = vec![];
         let mut states_before_pass = new_states.len();
@@ -159,7 +194,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
                 new_states: &mut new_states,
             },
             0,
-            &mut completions,
+            &mut completions_tx,
             &mut next_states,
             cfg,
             cursor,
@@ -188,7 +223,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
             expand_states(
                 &mut new_states,
                 i,
-                &mut completions,
+                &mut completions_tx,
                 &mut next_states,
                 cfg,
                 cursor,
@@ -201,10 +236,6 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         states.sort();
         let new_len = dedup(&mut states, |s| s);
         states.truncate(new_len);
-        completions.completions[base..].sort();
-        completions
-            .completion_index
-            .push(completions.completions.len());
     }
     {
         // algo sketch:
@@ -246,7 +277,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
 fn expand_states<'c>(
     mut transfer: impl StateGrouping<'c>,
     i: usize,
-    completions: &mut Completions<'c>,
+    completions: &mut CompletionsTransaction<'c, '_>,
     next_states: &mut Vec<State<'c>>,
     cfg: &'c Cfg,
     cursor: usize,
@@ -264,14 +295,10 @@ fn expand_states<'c>(
                 next_states.push(State(state.back_ref, state.sym, &state.remaining[1..]));
             }
         } else {
-            completions
-                .completions
-                .push((sym, State(state.back_ref, state.sym, &state.remaining[1..])));
-            transfer.write().extend(
-                cfg.rules_for(sym)
-                    .iter()
-                    .map(|r| State(cursor, sym, &r.parts[..])),
-            );
+            completions.push((sym, State(state.back_ref, state.sym, &state.remaining[1..])));
+            transfer
+                .write()
+                .extend(cfg.rules_for(sym).map(|r| State(cursor, sym, &r.parts[..])));
         }
     }
 }
