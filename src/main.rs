@@ -168,12 +168,12 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         // before the current pass needs to be checked again.
         let states_before_pass = transfer.new_states.len();
         // First we transfer out of the states from the last character.
-        expand_states(&mut transfer, &mut step);
+        step.expand_states(&mut transfer);
         let mut new_states = transfer.new_states;
 
         isolate_new_elements(&mut new_states, states_before_pass);
         grow_ordered_set(&mut new_states, |states| {
-            expand_states(states, &mut step);
+            step.expand_states(states);
         });
         sorted_set(&mut step.next_states);
         states = step.next_states;
@@ -231,38 +231,40 @@ fn isolate_new_elements<T: Ord>(states: &mut Vec<T>, old_len: usize) {
     });
     states.truncate(old_len + new_len);
 }
-fn expand_states<'c>(mut transfer: impl StateGrouping<State<'c>>, step: &mut EarleyStep<'c, '_>) {
-    for i in 0..transfer.read().len() {
-        let state = transfer.read()[i];
-        expand_states_(state, transfer.write(), step);
-    }
-}
-fn expand_states_<'c>(state: State<'c>, new: &mut Vec<State<'c>>, step: &mut EarleyStep<'c, '_>) {
-    let Some(&sym) = state.remaining.first() else {
-        // This state has recognized its nontermininal starting at state.back_ref
-        new.extend(step.completions_tx.query(state.back_ref, state.sym));
-        return;
-    };
-    if sym < 256 {
-        // Direct matches on the input symbol advance the state,
-        // otherwise this branch fails to parse and we drop the state
-        if step.input_symbol == sym as u8 {
-            step.next_states
-                .push(mk_state(state.back_ref, state.sym, &state.remaining[1..]));
+impl<'c> EarleyStep<'c, '_> {
+    fn expand_states(&mut self, mut transfer: impl StateGrouping<State<'c>>) {
+        for i in 0..transfer.read().len() {
+            let state = transfer.read()[i];
+            self.expand_state(state, transfer.write());
         }
-    } else {
-        // To match a nonterminal, expand all the rules for it,
-        // and remember our state as a completion if the nonterminal successfully
-        // parses.
-        step.completions_tx.push((
-            sym,
-            mk_state(state.back_ref, state.sym, &state.remaining[1..]),
-        ));
-        new.extend(
-            step.cfg
-                .rules_for(sym)
-                .map(|r| mk_state(step.completions_tx.batch_id(), sym, &r.parts[..])),
-        );
+    }
+    fn expand_state(&mut self, state: State<'c>, new: &mut Vec<State<'c>>) {
+        let Some(&sym) = state.remaining.first() else {
+            // This state has recognized its nontermininal starting at state.back_ref
+            new.extend(self.completions_tx.query(state.back_ref, state.sym));
+            return;
+        };
+        if sym < 256 {
+            // Direct matches on the input symbol advance the state,
+            // otherwise this branch fails to parse and we drop the state
+            if self.input_symbol == sym as u8 {
+                self.next_states
+                    .push(mk_state(state.back_ref, state.sym, &state.remaining[1..]));
+            }
+        } else {
+            // To match a nonterminal, expand all the rules for it,
+            // and remember our state as a completion if the nonterminal successfully
+            // parses.
+            self.completions_tx.push((
+                sym,
+                mk_state(state.back_ref, state.sym, &state.remaining[1..]),
+            ));
+            new.extend(
+                self.cfg
+                    .rules_for(sym)
+                    .map(|r| mk_state(self.completions_tx.batch_id(), sym, &r.parts[..])),
+            );
+        }
     }
 }
 fn vec_dedup<T: PartialEq>(vec: &mut Vec<T>) {
