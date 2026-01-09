@@ -85,20 +85,20 @@ fn mk_state(back_ref: usize, sym: NtSymbol, remaining: &[u32]) -> State<'_> {
 
 // Here's some unfortunate complexity, this boilerplate is just responsible
 // for allowing us to read + write to the same reference.
-trait StateGrouping<'c> {
-    fn read(&self) -> &Vec<State<'c>>;
-    fn write(&mut self) -> &mut Vec<State<'c>>;
+trait StateGrouping<T> {
+    fn read(&self) -> &[T];
+    fn write(&mut self) -> &mut Vec<T>;
 }
-impl<'b> StateGrouping<'b> for &'_ mut Vec<State<'b>> {
-    fn read(&self) -> &Vec<State<'b>> {
+impl<'b> StateGrouping<State<'b>> for &'_ mut Vec<State<'b>> {
+    fn read(&self) -> &[State<'b>] {
         self
     }
     fn write(&mut self) -> &mut Vec<State<'b>> {
         self
     }
 }
-impl<'b> StateGrouping<'b> for Vec<State<'b>> {
-    fn read(&self) -> &Vec<State<'b>> {
+impl<'b> StateGrouping<State<'b>> for Vec<State<'b>> {
+    fn read(&self) -> &[State<'b>] {
         self
     }
     fn write(&mut self) -> &mut Vec<State<'b>> {
@@ -109,20 +109,27 @@ struct FromOldStates<'a, 'c> {
     states: &'a Vec<State<'c>>,
     new_states: Vec<State<'c>>,
 }
-impl<'a, 'b> StateGrouping<'b> for FromOldStates<'a, 'b> {
-    fn read(&self) -> &Vec<State<'b>> {
+impl<'a, 'b> StateGrouping<State<'b>> for FromOldStates<'a, 'b> {
+    fn read(&self) -> &[State<'b>] {
         self.states
     }
     fn write(&mut self) -> &mut Vec<State<'b>> {
         &mut self.new_states
     }
 }
-
-struct EarleyStep<'c, 'a, T> {
-    new_states: T,
-    next_states: Vec<State<'c>>,
-    completions_tx: CompletionsTransaction<'c, 'a>,
+struct InternalSlice<'a, T> {
+    slice: &'a mut Vec<T>,
+    range: std::ops::Range<usize>,
 }
+impl<'a, T> StateGrouping<T> for InternalSlice<'a, T> {
+    fn read(&self) -> &[T] {
+        &self.slice[self.range.clone()]
+    }
+    fn write(&mut self) -> &mut Vec<T> {
+        self.slice
+    }
+}
+
 
 fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut states = cfg
@@ -137,55 +144,37 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut completions = Completions::new(src.len());
 
     for cursor in 0..src.len() {
-        let mut step = EarleyStep {
-            // As we expand the states, we'll generate more states that need to be processed.
-            // we keep track of all generated states here to deduplicate them
-            new_states: FromOldStates {
-                states: &states,
-                new_states: vec![],
-            },
-            // The states for the next character get accumulated here, they'll need to be deduplicated
-            // before we actually process the next character
-            next_states: vec![],
-            // If any state transition is a prediction, we remember the completion for it to use later
-            completions_tx: completions.add_group(),
+        // As we expand the states, we'll generate more states that need to be processed.
+        // we keep track of all generated states here to deduplicate them
+        let mut transfer = FromOldStates {
+            states: &states,
+            new_states: vec![],
         };
+        // The states for the next character get accumulated here, they'll need to be deduplicated
+        // before we actually process the next character
+        let mut next_states = vec![];
+        // If any state transition is a prediction, we remember the completion for it to use later
+        let mut completions_tx = completions.add_group();
         // To optimize deduplicating the new states, we deduplicate in batches, so that nothing
         // before the current pass needs to be checked again.
-        let mut states_before_pass = step.new_states.new_states.len();
-        expand_states(&mut step, 0, cfg, cursor, src);
-        let mut step = EarleyStep {
-            new_states: step.new_states.new_states,
-            next_states: step.next_states,
-            completions_tx: step.completions_tx,
-        };
+        let states_before_pass = transfer.new_states.len();
+        
+        expand_states(&mut transfer, &mut next_states, &mut completions_tx, cfg, cursor, src);
+        let mut new_states = transfer.new_states;
 
-        let mut loop_check = {
-            let mut iters = 0;
-            move || {
-                iters += 1;
-                if 120 <= iters {
-                    panic!("recursion limit?");
-                }
-            }
-        };
-        loop {
-            isolate_new_elements(&mut step.new_states, states_before_pass);
-            if states_before_pass == step.new_states.len() {
-                break;
-            }
-            let process_states_from = states_before_pass;
-            states_before_pass = step.new_states.len();
-            expand_states(&mut step, process_states_from, cfg, cursor, src);
-            step.new_states[..states_before_pass].sort();
-            loop_check();
-        }
-        sorted_set(&mut step.next_states);
-        states = step.next_states;
+        isolate_new_elements(&mut new_states, states_before_pass);
+        grow_ordered_set(&mut new_states, |mut states| {
+            expand_states(&mut states, &mut next_states, &mut completions_tx, cfg, cursor, src);
+        });
+        sorted_set(&mut next_states);
+        states = next_states;
     }
     states.sort();
-    grow_ordered_set(&mut states, |state| {
-        completions.query(state.back_ref, state.sym)
+    grow_ordered_set(&mut states, |mut states| {
+        for i in 0..states.read().len() {
+            let state = states.read()[i];
+            states.write().extend(completions.query(state.back_ref, state.sym));
+        }
     });
     // the match state is (back_ref: 0, sym: 256), so will always be at the start
     println!("{:?}", states[0]);
@@ -193,17 +182,24 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     vec![]
 }
 // Find the transitive closure of a relation
-fn grow_ordered_set<T: Ord + Clone, I: Iterator<Item = T>>(
+fn grow_ordered_set<T: Ord + Clone>(
     states: &mut Vec<T>,
-    mut rel: impl FnMut(T) -> I,
+    mut rel: impl FnMut(InternalSlice<'_, T>),
 ) {
+    let mut loop_check = {
+        let mut iters = 0;
+        move || {
+            iters += 1;
+            if 120 <= iters {
+                panic!("recursion limit?");
+            }
+        }
+    };
     let mut pending_start = 0;
     while pending_start < states.len() {
+        loop_check();
         let pending_end = states.len();
-        for i in pending_start..pending_end {
-            let state = states[i].clone();
-            states.extend(rel(state));
-        }
+        rel(InternalSlice { slice: states, range: pending_start..pending_end });
         states[..pending_end].sort();
         isolate_new_elements(states, pending_end);
         pending_start = pending_end;
@@ -222,25 +218,21 @@ fn isolate_new_elements<T: Ord>(states: &mut Vec<T>, old_len: usize) {
     states.truncate(old_len + new_len);
 }
 fn expand_states<'c>(
-    mut transfer: &mut EarleyStep<'c, '_, impl StateGrouping<'c>>,
-    i: usize,
+    transfer: &mut impl StateGrouping<State<'c>>,
+    next_states: &mut Vec<State<'c>>,
+    completions: &mut CompletionsTransaction<'c, '_>,
     cfg: &'c Cfg,
     cursor: usize,
     src: &[u8],
 ) {
-    let EarleyStep {
-        new_states: transfer,
-        next_states,
-        completions_tx: completions,
-    } = &mut transfer;
-    for i in i..transfer.read().len() {
+    for i in 0..transfer.read().len() {
         let state = transfer.read()[i];
         expand_states_(state, transfer, completions, src, cursor, next_states, cfg);
     }
 }
 fn expand_states_<'c>(
     state: State<'c>, 
-    transfer: &mut impl StateGrouping<'c>,
+    transfer: &mut impl StateGrouping<State<'c>>,
     completions: &mut CompletionsTransaction<'c, '_>,
     src: &[u8],
     cursor: usize,
