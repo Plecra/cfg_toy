@@ -49,10 +49,11 @@ macro_rules! cfg {
         $($states:ident)*;
         $first_rule:ident ::= $($rule_definition:tt)*
     } => {{
+        let mut state_names: Vec<&'static str> = vec![];
         let mut states = 256u32;
-        $(let $states = states; #[allow(unused_assignments)] { states += 1; })*
+        $(let $states = states; #[allow(unused_assignments)] { states += 1; }; state_names.push(stringify!($states));)*
         let mut cx: (Vec<$crate::grammar::Rule>, Vec<u32>, u32) = (vec![], vec![], $first_rule);
         $crate::cfg_rules!(cx $($rule_definition)*);
-        $crate::grammar::Cfg { rules: cx.0 }
+        ($crate::grammar::Cfg { rules: cx.0 }, state_names)
     }};
 }

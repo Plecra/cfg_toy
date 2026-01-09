@@ -15,13 +15,48 @@ pub struct Node {
     // // next_sibling: usize,
 }
 type Ast = Vec<Node>;
+
+struct RecordTrace<'a> {
+    current_symbol: usize,
+    trace: &'a mut Vec<(usize, usize, NtSymbol)>,
+}
+impl TraceAt for RecordTrace<'_> {
+    fn completed(&mut self, back_ref: usize, sym: NtSymbol) {
+        self.trace.push((back_ref, self.current_symbol, sym));
+    }
+}
+impl Trace for Vec<(usize, usize, NtSymbol)> {
+    fn at(&mut self, symbol_index: usize) -> impl TraceAt + '_ {
+        RecordTrace {
+            current_symbol: symbol_index,
+            trace: self,
+        }
+    }
+}
+pub trait TraceAt {
+    fn completed(&mut self, back_ref: usize, sym: NtSymbol);
+}
+pub trait Trace {
+    fn at(&mut self, symbol_index: usize) -> impl TraceAt + '_;
+}
+impl<T: Trace> Trace for &'_ mut T {
+    fn at(&mut self, symbol_index: usize) -> impl TraceAt + '_ {
+        (**self).at(symbol_index)
+    }
+}
+impl Trace for () {
+    fn at(&mut self, _symbol_index: usize) -> impl TraceAt + '_ {}
+}
+impl TraceAt for () {
+    fn completed(&mut self, _back_ref: usize, _sym: NtSymbol) {}
+}
 // type Symbol = u32;
-type NtSymbol = u32;
+pub(crate) type NtSymbol = u32;
 // TODO: can switch this to encoding the sym id into the slice.
 // the standard presentation is that these store (Rule, rule_offset)
-type Completion<'a> = (NtSymbol, State<'a>);
+pub(crate) type Completion<'a> = (NtSymbol, State<'a>);
 #[derive(Copy, Clone, Debug, PartialOrd, Ord, PartialEq, Eq)]
-struct State<'a> {
+pub(crate) struct State<'a> {
     back_ref: usize,
     sym: NtSymbol,
     remaining: &'a [u32],
@@ -34,13 +69,14 @@ fn mk_state(back_ref: usize, sym: NtSymbol, remaining: &[u32]) -> State<'_> {
     }
 }
 
-struct EarleyStep<'c, 'r> {
+struct EarleyStep<'c, 'r, T> {
     cfg: &'c grammar::Cfg,
     input_symbol: u8,
     completions_tx: CompletionsTransaction<'c, 'r>,
     next_states: Vec<State<'c>>,
+    trace: T,
 }
-pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
+pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32, mut trace: impl Trace) {
     let mut states = cfg
         .rules_for(init_sym)
         .map(|r| mk_state(0, init_sym, &r.parts[..]))
@@ -56,16 +92,16 @@ pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
     // to revisit that
     let mut completions = Completions::new(src.len());
 
-    for &input_symbol in src {
-        println!("@ {:?}", states);
+    for cursor in 0..src.len() {
         let mut step = EarleyStep {
             cfg,
-            input_symbol,
+            input_symbol: src[cursor],
             // The states for the next character get accumulated here, they'll need to be deduplicated
             // before we actually process the next character
             next_states,
             // If any state transition is a prediction, we remember the completion for it to use later
             completions_tx: completions.add_group(),
+            trace: trace.at(cursor),
         };
         // As we expand the states, we'll generate more states that need to be processed.
         // we keep track of all generated states here to deduplicate them
@@ -93,9 +129,12 @@ pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
     grow_ordered_set(&mut states, |mut states| {
         for i in 0..states.read().len() {
             let state = states.read()[i];
-            states
-                .write()
-                .extend(completions.query(state.back_ref, state.sym));
+            if state.remaining.is_empty() {
+                // This state has recognized its nontermininal starting at state.back_ref
+                trace.at(src.len()).completed(state.back_ref, state.sym - 256);
+                states.write().extend(completions.query(state.back_ref, state.sym));
+                continue;
+            }
         }
     });
     // the match state is (back_ref: 0, sym: 256), so will always be at the start
@@ -104,10 +143,8 @@ pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
         states.first().map(|s| (s.back_ref, s.sym)),
         Some((0, init_sym))
     );
-
-    vec![]
 }
-impl<'c> EarleyStep<'c, '_> {
+impl<'c, T: TraceAt> EarleyStep<'c, '_, T> {
     fn expand_states(&mut self, mut transfer: impl BufferPair<State<'c>>) {
         for i in 0..transfer.read().len() {
             let state = transfer.read()[i];
@@ -117,6 +154,7 @@ impl<'c> EarleyStep<'c, '_> {
     fn expand_state(&mut self, state: State<'c>, new: &mut Vec<State<'c>>) {
         let Some(&sym) = state.remaining.first() else {
             // This state has recognized its nontermininal starting at state.back_ref
+            self.trace.completed(state.back_ref, state.sym - 256);
             new.extend(self.completions_tx.query(state.back_ref, state.sym));
             return;
         };

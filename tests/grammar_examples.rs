@@ -1,6 +1,6 @@
 #[test]
 fn simple_logic() {
-    let mut mycfg = cfg_toy::cfg! {
+    let (mut mycfg, state_names) = cfg_toy::cfg! {
         expr and_expr primary alpha ident ws gap and or not ambiguous_1 ambiguous_2;
 
         ws ::= " " .
@@ -21,7 +21,7 @@ fn simple_logic() {
         // Ambiguous rules to test parse forest handling
         ambiguous_1 ::= "then".
         ambiguous_2 ::= "theatre".
-
+        
         expr ::= and_expr or expr.
         expr ::= and_expr gap ambiguous_1.
         expr ::= and_expr gap ambiguous_2.
@@ -36,6 +36,12 @@ fn simple_logic() {
     };
     println!("{:?}", mycfg);
     mycfg.rules.sort_by_key(|rule| rule.for_nt);
-    let _ = cfg_toy::parse_earley(&mycfg, "true or false and not false or bb".as_bytes(), 256);
-    let _ = cfg_toy::parse_earley(&mycfg, "true then".as_bytes(), 256);
+    let _ = cfg_toy::parse_earley(&mycfg, "true or false and not false or bb".as_bytes(), 256, ());
+    let _ = cfg_toy::parse_earley(&mycfg, "true then".as_bytes(), 256, ());
+    let mut trace = vec![];
+    let _ = cfg_toy::parse_earley(&mycfg, "true then".as_bytes(), 256, &mut trace);
+    for (start, end, state) in trace {
+        println!("{} {:?}", state_names[state as usize], start..end);
+    }
+    panic!();
 }
