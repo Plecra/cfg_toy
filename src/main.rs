@@ -89,12 +89,12 @@ trait StateGrouping<T> {
     fn read(&self) -> &[T];
     fn write(&mut self) -> &mut Vec<T>;
 }
-impl<'b> StateGrouping<State<'b>> for &'_ mut Vec<State<'b>> {
-    fn read(&self) -> &[State<'b>] {
-        self
+impl<T, I: StateGrouping<T> + ?Sized> StateGrouping<T> for &'_ mut I {
+    fn read(&self) -> &[T] {
+        (**self).read()
     }
-    fn write(&mut self) -> &mut Vec<State<'b>> {
-        self
+    fn write(&mut self) -> &mut Vec<T> {
+        (**self).write()
     }
 }
 impl<'b> StateGrouping<State<'b>> for Vec<State<'b>> {
@@ -129,8 +129,13 @@ impl<'a, T> StateGrouping<T> for InternalSlice<'a, T> {
         self.slice
     }
 }
-
-
+struct EarleyStep<'c, 'r> {
+    cfg: &'c Cfg,
+    input_symbol: u8,
+    completions_tx: CompletionsTransaction<'c, 'r>,
+    next_states: Vec<State<'c>>,
+}
+// type EarleyStep<'a, T: StateGrouping<State<'a>>> = (T, Vec<State<'a>>, CompletionsTransaction<'a, 'a>);
 fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut states = cfg
         .rules_for(init_sym)
@@ -143,37 +148,43 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     // to revisit that
     let mut completions = Completions::new(src.len());
 
-    for cursor in 0..src.len() {
+    for &input_symbol in src {
+        let mut step = EarleyStep {
+            cfg,
+            input_symbol,
+            // The states for the next character get accumulated here, they'll need to be deduplicated
+            // before we actually process the next character
+            next_states: vec![],
+            // If any state transition is a prediction, we remember the completion for it to use later
+            completions_tx: completions.add_group(),
+        };
         // As we expand the states, we'll generate more states that need to be processed.
         // we keep track of all generated states here to deduplicate them
         let mut transfer = FromOldStates {
             states: &states,
             new_states: vec![],
         };
-        // The states for the next character get accumulated here, they'll need to be deduplicated
-        // before we actually process the next character
-        let mut next_states = vec![];
-        // If any state transition is a prediction, we remember the completion for it to use later
-        let mut completions_tx = completions.add_group();
         // To optimize deduplicating the new states, we deduplicate in batches, so that nothing
         // before the current pass needs to be checked again.
         let states_before_pass = transfer.new_states.len();
-        
-        expand_states(&mut transfer, &mut next_states, &mut completions_tx, cfg, cursor, src);
+        // First we transfer out of the states from the last character.
+        expand_states(&mut transfer, &mut step);
         let mut new_states = transfer.new_states;
 
         isolate_new_elements(&mut new_states, states_before_pass);
-        grow_ordered_set(&mut new_states, |mut states| {
-            expand_states(&mut states, &mut next_states, &mut completions_tx, cfg, cursor, src);
+        grow_ordered_set(&mut new_states, |states| {
+            expand_states(states, &mut step);
         });
-        sorted_set(&mut next_states);
-        states = next_states;
+        sorted_set(&mut step.next_states);
+        states = step.next_states;
     }
     states.sort();
     grow_ordered_set(&mut states, |mut states| {
         for i in 0..states.read().len() {
             let state = states.read()[i];
-            states.write().extend(completions.query(state.back_ref, state.sym));
+            states
+                .write()
+                .extend(completions.query(state.back_ref, state.sym));
         }
     });
     // the match state is (back_ref: 0, sym: 256), so will always be at the start
@@ -199,7 +210,10 @@ fn grow_ordered_set<T: Ord + Clone>(
     while pending_start < states.len() {
         loop_check();
         let pending_end = states.len();
-        rel(InternalSlice { slice: states, range: pending_start..pending_end });
+        rel(InternalSlice {
+            slice: states,
+            range: pending_start..pending_end,
+        });
         states[..pending_end].sort();
         isolate_new_elements(states, pending_end);
         pending_start = pending_end;
@@ -217,45 +231,37 @@ fn isolate_new_elements<T: Ord>(states: &mut Vec<T>, old_len: usize) {
     });
     states.truncate(old_len + new_len);
 }
-fn expand_states<'c>(
-    transfer: &mut impl StateGrouping<State<'c>>,
-    next_states: &mut Vec<State<'c>>,
-    completions: &mut CompletionsTransaction<'c, '_>,
-    cfg: &'c Cfg,
-    cursor: usize,
-    src: &[u8],
-) {
+fn expand_states<'c>(mut transfer: impl StateGrouping<State<'c>>, step: &mut EarleyStep<'c, '_>) {
     for i in 0..transfer.read().len() {
         let state = transfer.read()[i];
-        expand_states_(state, transfer, completions, src, cursor, next_states, cfg);
+        expand_states_(state, transfer.write(), step);
     }
 }
-fn expand_states_<'c>(
-    state: State<'c>, 
-    transfer: &mut impl StateGrouping<State<'c>>,
-    completions: &mut CompletionsTransaction<'c, '_>,
-    src: &[u8],
-    cursor: usize,
-    next_states: &mut Vec<State<'c>>,
-    cfg: &'c Cfg,) {
-
+fn expand_states_<'c>(state: State<'c>, new: &mut Vec<State<'c>>, step: &mut EarleyStep<'c, '_>) {
     let Some(&sym) = state.remaining.first() else {
-        let new = transfer.write();
-        new.extend(completions.query(state.back_ref, state.sym));
+        // This state has recognized its nontermininal starting at state.back_ref
+        new.extend(step.completions_tx.query(state.back_ref, state.sym));
         return;
     };
     if sym < 256 {
-        if src[cursor] == sym as u8 {
-            next_states.push(mk_state(state.back_ref, state.sym, &state.remaining[1..]));
+        // Direct matches on the input symbol advance the state,
+        // otherwise this branch fails to parse and we drop the state
+        if step.input_symbol == sym as u8 {
+            step.next_states
+                .push(mk_state(state.back_ref, state.sym, &state.remaining[1..]));
         }
     } else {
-        completions.push((
+        // To match a nonterminal, expand all the rules for it,
+        // and remember our state as a completion if the nonterminal successfully
+        // parses.
+        step.completions_tx.push((
             sym,
             mk_state(state.back_ref, state.sym, &state.remaining[1..]),
         ));
-        transfer.write().extend(
-            cfg.rules_for(sym)
-                .map(|r| mk_state(cursor, sym, &r.parts[..])),
+        new.extend(
+            step.cfg
+                .rules_for(sym)
+                .map(|r| mk_state(step.completions_tx.batch_id(), sym, &r.parts[..])),
         );
     }
 }
@@ -266,10 +272,10 @@ fn sorted_set<T: PartialEq + Ord>(vec: &mut Vec<T>) {
     vec.sort();
     vec_dedup(vec);
 }
-fn slice_retain_with_context<T, F>(vec: &mut [T], mut f: F) -> usize
-where
-    F: FnMut(&mut [T], &mut T) -> bool,
-{
+fn slice_retain_with_context<T>(
+    vec: &mut [T],
+    mut f: impl FnMut(&mut [T], &mut T) -> bool,
+) -> usize {
     let mut write = 0;
     for read in 0..vec.len() {
         let (retained, tail) = vec.split_at_mut(write);
@@ -281,10 +287,7 @@ where
     }
     write
 }
-fn retain_with_context<T, F>(vec: &mut Vec<T>, f: F)
-where
-    F: FnMut(&mut [T], &mut T) -> bool,
-{
+fn retain_with_context<T>(vec: &mut Vec<T>, f: impl FnMut(&mut [T], &mut T) -> bool) {
     let len = slice_retain_with_context(&mut vec[..], f);
     vec.truncate(len);
 }

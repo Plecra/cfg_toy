@@ -50,6 +50,9 @@ impl<'a, 'b> CompletionsTransaction<'a, 'b> {
     pub fn push(&mut self, completion: Completion<'a>) {
         self.completions.completions.push(completion);
     }
+    pub fn batch_id(&self) -> usize {
+        self.completions.completion_index.len() - 1
+    }
 }
 impl<'a, 'b> Drop for CompletionsTransaction<'a, 'b> {
     fn drop(&mut self) {
