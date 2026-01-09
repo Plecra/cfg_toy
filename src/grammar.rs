@@ -8,6 +8,24 @@ pub struct Cfg<Symbol> {
     pub rules: Vec<Rule<Symbol>>,
 }
 impl<Symbol> Cfg<Symbol> {
+    pub fn map<U>(&self, mut f: impl FnMut(&Symbol) -> U) -> Cfg<U> {
+        Cfg {
+            rules: self
+                .rules
+                .iter()
+                .map(|rule| Rule {
+                    for_nt: rule.for_nt,
+                    parts: rule.parts.iter().map(&mut f).collect(),
+                })
+                .collect(),
+        }
+    }
+}
+impl<Symbol> Cfg<Symbol> {
+    pub fn new(mut rules: Vec<Rule<Symbol>>) -> Self {
+        rules.sort_by_key(|rule| rule.for_nt);
+        Self { rules }
+    }
     pub(crate) fn rules_for(&self, nt: u32) -> impl Iterator<Item = &'_ Rule<Symbol>> + '_ {
         let start = self.rules.partition_point(|r| r.for_nt < nt);
         let end = self.rules.partition_point(|r| r.for_nt <= nt);
@@ -54,6 +72,6 @@ macro_rules! cfg {
         $(let $states = states; #[allow(unused_assignments)] { states += 1; }; state_names.push(stringify!($states));)*
         let mut cx: (Vec<$crate::grammar::Rule<u32>>, Vec<u32>, u32) = (vec![], vec![], $first_rule);
         $crate::cfg_rules!(cx $($rule_definition)*);
-        ($crate::grammar::Cfg { rules: cx.0 }, state_names)
+        ($crate::grammar::Cfg::new(cx.0), state_names)
     }};
 }

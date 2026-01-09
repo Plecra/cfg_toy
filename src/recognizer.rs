@@ -1,3 +1,4 @@
+use core::sync;
 use std::borrow::Borrow;
 
 use crate::buffer_pair::{BufferPair, Transfer};
@@ -68,7 +69,7 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
         .rules_for(init_sym)
         .map(|r| mk_state(0, init_sym, &r.parts[..]))
         .collect::<Vec<_>>();
-
+    println!("initial states: {:?}", states);
     // This is kept between iterations for double buffering to
     // save on allocating it.
     let mut next_states = vec![];
@@ -80,6 +81,7 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
     let mut completions = Completions::new(src.len());
 
     for cursor in 0..src.len() {
+        println!("visiting {}", cursor);
         let mut step = EarleyStep {
             cfg,
             input_symbol: &src[cursor],
@@ -105,6 +107,7 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
 
         isolate_new_elements(&mut new_states, states_before_pass);
         grow_ordered_set(&mut new_states, |states| {
+            println!("{:?}", states.read());
             step.expand_states(states);
         });
         sorted_set(&mut step.next_states);
@@ -123,11 +126,27 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
                     .write()
                     .extend(completions.query(state.back_ref, state.sym));
                 continue;
+            } else {
+                let sym = state.remaining.first().unwrap();
+                match sym.as_part() {
+                    super::Either::Ok(_) => (),
+                    super::Either::Err(nt) => {
+                        let can_skip = cfg.rules_for(nt).any(|rule| rule.parts.is_empty());
+                        if can_skip {
+                            trace.at(src.len()).completed(src.len(), nt);
+                            states.write().push(mk_state(
+                                state.back_ref,
+                                state.sym,
+                                &state.remaining[1..],
+                            ))
+                        }
+                    }
+                }
             }
         }
     });
     // the match state is (back_ref: 0, sym: 256), so will always be at the start
-    // println!("{:?}", states.first());
+    println!("final states: {:?}", states);
     assert_eq!(
         states.first().map(|s| (s.back_ref, s.sym)),
         Some((0, init_sym))
@@ -143,15 +162,19 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
     fn expand_state(&mut self, state: State<'c, Symbol>, new: &mut Vec<State<'c, Symbol>>) {
         let Some(sym) = state.remaining.first() else {
             // This state has recognized its nontermininal starting at state.back_ref
+            println!("done with {:?}", state);
             self.trace.completed(state.back_ref, state.sym);
             new.extend(self.completions_tx.query(state.back_ref, state.sym));
             return;
         };
         match sym.as_part() {
             super::Either::Ok(sym) => {
+                println!("trying to match sym {:?}", *sym.borrow());
                 // Direct matches on the input symbol advance the state,
                 // otherwise this branch fails to parse and we drop the state
                 if self.input_symbol == sym.borrow() {
+                    println!("matches {:?}", *sym.borrow());
+
                     self.next_states.push(mk_state(
                         state.back_ref,
                         state.sym,
@@ -159,19 +182,33 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                     ));
                 }
             }
-            super::Either::Err(sym) => {
+            super::Either::Err(nt) => {
+                println!("predicting for sym {sym:?}");
                 // To match a nonterminal, expand all the rules for it,
                 // and remember our state as a completion if the nonterminal successfully
                 // parses.
                 self.completions_tx.push((
-                    sym,
+                    nt,
                     mk_state(state.back_ref, state.sym, &state.remaining[1..]),
                 ));
-                new.extend(
-                    self.cfg
-                        .rules_for(sym)
-                        .map(|r| mk_state(self.completions_tx.batch_id(), sym, &r.parts[..])),
-                );
+                
+                for rule in self.cfg.rules_for(nt) {
+                    if rule.parts.is_empty() {
+                        println!("    (epsilon)");
+                        self.trace.completed(self.completions_tx.batch_id(), nt);
+                        self.expand_state(mk_state(
+                            state.back_ref,
+                            state.sym,
+                            &state.remaining[1..],
+                        ), new);
+                    } else {
+                        new.push(mk_state(
+                            self.completions_tx.batch_id(),
+                            nt,
+                            &rule.parts[..],
+                        ));
+                    }
+                }
             }
         }
     }

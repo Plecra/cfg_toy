@@ -59,8 +59,8 @@ type Either<L, R> = std::result::Result<L, R>;
 
 /// This is a very blunt approach just to line all the types
 /// up right for making the original (u8, u32) version generic
-pub trait CfgSymbol {
-    type Terminal: PartialEq;
+pub trait CfgSymbol: std::fmt::Debug {
+    type Terminal: PartialEq + std::fmt::Debug;
     type TerminalRef<'a>: std::borrow::Borrow<Self::Terminal>
     where
         Self: 'a;
@@ -122,6 +122,57 @@ pub struct Node {
 type Ast = Vec<Node>;
 use recognizer::NtSymbol;
 use recognizer::TraceAt;
+
+pub struct LabelledSymbol {
+    pub symbol: NtSymbol,
+    pub label: &'static str,
+}
+impl Ord for LabelledSymbol {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.symbol.cmp(&other.symbol)
+    }
+}
+impl PartialOrd for LabelledSymbol {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
+    {
+        Some(self.cmp(other))
+    }
+}
+impl PartialEq for LabelledSymbol {
+    fn eq(&self, other: &Self) -> bool {
+        self.symbol == other.symbol
+    }
+}
+impl Eq for LabelledSymbol {}
+#[derive(PartialEq)]
+#[repr(transparent)]
+pub struct Utf8SingleByte(u8);
+pub fn cast_buf(buf: &[u8]) -> &[Utf8SingleByte] {
+    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const Utf8SingleByte, buf.len()) }
+}
+impl std::fmt::Debug for Utf8SingleByte {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", char::from(self.0))
+    }
+}
+impl CfgSymbol for LabelledSymbol {
+    type Terminal = Utf8SingleByte;
+    type TerminalRef<'a> = Utf8SingleByte
+    where
+        Self: 'a;
+    fn as_part(&self) -> Either<Self::TerminalRef<'_>, NtSymbol> {
+        if self.symbol < 256 {
+            Either::Ok(Utf8SingleByte(self.symbol as u8))
+        } else {
+            Either::Err(self.symbol)
+        }
+    }
+}
+impl std::fmt::Debug for LabelledSymbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.label.fmt(f)
+    }
+}
 struct RecordTrace<'a> {
     current_symbol: usize,
     trace: &'a mut Vec<(usize, usize, NtSymbol)>,
