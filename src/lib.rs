@@ -35,15 +35,16 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
         for rule in rules {
             let stack_len = stack.len();
             if matched_rule(span, start, trace, &rule.parts, &mut stack, state_nt, span.len()) {
-                // if let Some((_, first_child)) = (stack_len < stack.len())
-                //     .then_some(())
-                //     .and_then(|_| stack.last())
-                //     && let Err(new_nt) = first_child.as_part()
-                //     && new_nt == state_nt
-                // {
-                //     // left-recursive without progress
-                //     // FIXME: This can actually happen recursively so need to add handling for that too
-                // } else {
+                if let Some((new_span, first_child)) = stack.last().filter(|_| stack_len + 1 == stack.len())
+                    && let Err(new_nt) = first_child.as_part()
+                    && new_nt == state_nt
+                    && new_span.len() == span.len()
+                {
+                    // left-recursive without progress
+                    // FIXME: This can actually happen recursively so need to add handling for that too
+                    // I think we might be able to use the same trick from eta rules though: we can always
+                    // jump through identity definitions
+                } else {
 
                     // push nodes to ast
                     let end = start + span.len();
@@ -54,7 +55,7 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
                         children: stack.len() - stack_len,
                     });
                     continue 'next_node;
-                // }
+                }
             }
             stack.truncate(stack_len);
         }
@@ -123,7 +124,7 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
             }
         }
     }
-    src.len() == 0
+    src.is_empty()
 }
 #[derive(Debug)]
 pub struct Node<'c, Symbol> {
