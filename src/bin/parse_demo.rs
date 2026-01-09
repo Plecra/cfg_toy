@@ -1,5 +1,4 @@
-#[test]
-fn simple_logic() {
+fn main() {
     let (mut mycfg, state_names) = cfg_toy::cfg! {
         expr and_expr primary alpha ident ws gap and or not ambiguous_1 ambiguous_2;
 
@@ -48,5 +47,4 @@ fn simple_logic() {
     trace.sort_by_key(|m| (m.1, m.2));
     let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, init_sym);
     println!("{ast:?}");
-    panic!();
 }
