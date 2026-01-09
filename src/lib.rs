@@ -24,8 +24,9 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
 ) -> Ast<'c, Symbol> {
     let mut ast = vec![];
     let mut stack = vec![(src, init_sym)];
+    println!("{trace:?}");
     'next_node: while let Some((span, state)) = stack.pop() {
-        // println!("{state:?} under {:?}", stack.iter().map(|(_, s)| s).collect::<Vec<_>>());
+        println!("{state:?} under {:?}", stack.iter().map(|(_, s)| s).collect::<Vec<_>>());
         let state_nt = match state.as_part() {
             Either::Err(sym) => sym,
             Either::Ok(_) => panic!("terminal in trace"),
@@ -34,6 +35,7 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
         let start = span.as_ptr() as usize - src.as_ptr() as usize;
         for rule in rules {
             let stack_len = stack.len();
+            println!("  trying rule {:?} for span {:?}", rule.parts, span);
             if matched_rule(span, start, trace, &rule.parts, &mut stack, state_nt, span.len()) {
                 if let Some((new_span, first_child)) = stack.last().filter(|_| stack_len + 1 == stack.len())
                     && let Err(new_nt) = first_child.as_part()
@@ -94,7 +96,15 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
     parent_sym: u32,
     parent_len: usize,
 ) -> bool {
-    // println!("matching rule {:?}", rule);
+    // In the current algorithm it's possible to see a match for the RHS of a
+    // rule, which is *actually* the child of another higherlevel rule which
+    // led to a failed parse because it returned "too late"
+    // this form of ambiguity could cause a match on a rule to fail, because
+    // the wrong path was taken. This means the reconstruction must
+    // attempt nondeterminism whenever selecting the match that we'll use for
+    // a nonterminal.
+    //
+    // This can happen even in unambiguous parses.
     for part in rule.iter().rev() {
         match part.as_part() {
             Either::Ok(part) => {

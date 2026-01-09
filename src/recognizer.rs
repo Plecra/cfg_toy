@@ -81,6 +81,7 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
     let mut completions = Completions::new(src.len());
 
     for cursor in 0..src.len() {
+        println!("{cursor}@{states:?}");
         let mut step = EarleyStep {
             cfg,
             input_symbol: &src[cursor],
@@ -106,7 +107,7 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
 
         isolate_new_elements(&mut new_states, states_before_pass);
         grow_ordered_set(&mut new_states, |states| {
-            // println!("{:?}", states.read());
+            println!("{:?}", states.read());
             step.expand_states(states);
         });
         sorted_set(&mut step.next_states);
@@ -148,7 +149,7 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
         }
     });
     // the match state is (back_ref: 0, sym: 256), so will always be at the start
-    println!("final states: {:?}", states);
+    // println!("final states: {:?}", states);
     assert_eq!(
         states.first().map(|s| (s.back_ref, s.sym)),
         Some((0, init_sym))
@@ -164,7 +165,7 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
     fn expand_state(&mut self, state: State<'c, Symbol>, new: &mut Vec<State<'c, Symbol>>) {
         let Some(sym) = state.remaining.first() else {
             // This state has recognized its nontermininal starting at state.back_ref
-            // println!("done with {:?}", state);
+            println!("done with {:?}", state);
             self.trace.completed(state.back_ref, state.sym);
             new.extend(self.completions_tx.query(state.back_ref, state.sym));
             return;
@@ -195,8 +196,18 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                 ));
                 
                 for rule in self.cfg.rules_for(nt) {
+                    // FIXME: This also needs to be done transitively:
+                    // 
                     if rule.parts.is_empty() {
                         // println!("    (epsilon)");
+                        // FIXME: Empty matches can be duplicated in the trace,
+                        // and should likely be de-duplicated.
+                        // This is still the most straightforward implementation for
+                        // the empty rules since it means the order that they're
+                        // processed in can't matter.
+                        // afaict it would also be possible to deliberately sort
+                        // out the empty rules and fire them after everything else
+                        // *then* repeat that until no more empty rules are left.
                         self.trace.completed(self.completions_tx.batch_id(), nt);
                         self.expand_state(mk_state(
                             state.back_ref,
