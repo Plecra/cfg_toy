@@ -25,6 +25,7 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
     let mut ast = vec![];
     let mut stack = vec![(src, init_sym)];
     'next_node: while let Some((span, state)) = stack.pop() {
+        // println!("{state:?} under {:?}", stack.iter().map(|(_, s)| s).collect::<Vec<_>>());
         let state_nt = match state.as_part() {
             Either::Err(sym) => sym,
             Either::Ok(_) => panic!("terminal in trace"),
@@ -33,26 +34,27 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
         let start = span.as_ptr() as usize - src.as_ptr() as usize;
         for rule in rules {
             let stack_len = stack.len();
-            if matched_rule(span, start, trace, &rule.parts, &mut stack) {
-                if let Some((_, first_child)) = (stack_len < stack.len())
-                    .then_some(())
-                    .and_then(|_| stack.last())
-                    && let Err(new_nt) = first_child.as_part()
-                    && new_nt == state_nt
-                {
-                    // left-recursive without progress
-                    // FIXME: This can actually happen recursively so need to add handling for that too
-                    continue;
-                }
-                // push nodes to ast
-                let end = start + span.len();
-                ast.push(Node {
-                    transition: state,
-                    start,
-                    end,
-                    children: stack.len() - stack_len,
-                });
-                continue 'next_node;
+            if matched_rule(span, start, trace, &rule.parts, &mut stack, state_nt, span.len()) {
+                // if let Some((_, first_child)) = (stack_len < stack.len())
+                //     .then_some(())
+                //     .and_then(|_| stack.last())
+                //     && let Err(new_nt) = first_child.as_part()
+                //     && new_nt == state_nt
+                // {
+                //     // left-recursive without progress
+                //     // FIXME: This can actually happen recursively so need to add handling for that too
+                // } else {
+
+                    // push nodes to ast
+                    let end = start + span.len();
+                    ast.push(Node {
+                        transition: state,
+                        start,
+                        end,
+                        children: stack.len() - stack_len,
+                    });
+                    continue 'next_node;
+                // }
             }
             stack.truncate(stack_len);
         }
@@ -88,7 +90,10 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
     mut trace: &[(usize, usize, NtSymbol)],
     rule: &'c [Symbol],
     children: &mut Vec<(&'a [Symbol::Terminal], &'c Symbol)>,
+    parent_sym: u32,
+    parent_len: usize,
 ) -> bool {
+    // println!("matching rule {:?}", rule);
     for part in rule.iter().rev() {
         match part.as_part() {
             Either::Ok(part) => {
@@ -101,11 +106,16 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
                 // find the last occurrence of this symbol in the trace that ends at src_index + 1
                 let Some((start, end, _)) = trace
                     .iter()
-                    .rfind(|&&(_, end, s)| s == sym && end == (src.len() + offset))
+                    .rfind(|&&(start, end, s)|
+                        s == sym && end == (src.len() + offset)
+                        // FIXME: This needs to work recursively again,
+                        // if a rule is left/right recursive but hidden through another rule
+                        && (s != parent_sym || (end - start) < parent_len)
+                    )
                 else {
                     return false;
                 };
-                println!("pushing {start}..{end} for sym {sym}");
+                // println!("pushing {start}..{end} for sym {sym}");
                 children.push((&src[*start - offset..*end - offset], part));
                 src = &src[..start - offset];
                 let i = trace.partition_point(|(_, match_end, _)| match_end <= start);
@@ -113,7 +123,7 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
             }
         }
     }
-    true
+    src.len() == 0
 }
 #[derive(Debug)]
 pub struct Node<'c, Symbol> {

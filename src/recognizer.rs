@@ -175,7 +175,7 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                 // Direct matches on the input symbol advance the state,
                 // otherwise this branch fails to parse and we drop the state
                 if self.input_symbol == sym.borrow() {
-                    println!("matches {:?}", *sym.borrow());
+                    // println!("matches {:?}", *sym.borrow());
 
                     self.next_states.push(mk_state(
                         state.back_ref,
@@ -185,7 +185,7 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                 }
             }
             super::Either::Err(nt) => {
-                println!("predicting for sym {sym:?}");
+                // println!("predicting for sym {sym:?}");
                 // To match a nonterminal, expand all the rules for it,
                 // and remember our state as a completion if the nonterminal successfully
                 // parses.
@@ -196,7 +196,7 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                 
                 for rule in self.cfg.rules_for(nt) {
                     if rule.parts.is_empty() {
-                        println!("    (epsilon)");
+                        // println!("    (epsilon)");
                         self.trace.completed(self.completions_tx.batch_id(), nt);
                         self.expand_state(mk_state(
                             state.back_ref,
