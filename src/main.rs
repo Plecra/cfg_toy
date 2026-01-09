@@ -107,19 +107,19 @@ impl<'a, 'b> StateGrouping<'b> for Vec<State<'b>> {
 }
 struct FromOldStates<'a, 'c> {
     states: &'a Vec<State<'c>>,
-    new_states: &'a mut Vec<State<'c>>,
+    new_states: Vec<State<'c>>,
 }
 impl<'a, 'b> StateGrouping<'b> for FromOldStates<'a, 'b> {
     fn read(&self) -> &Vec<State<'b>> {
         self.states
     }
     fn write(&mut self) -> &mut Vec<State<'b>> {
-        self.new_states
+        &mut self.new_states
     }
 }
 
-struct EarleyStep<'c, 'a> {
-    new_states: Vec<State<'c>>,
+struct EarleyStep<'c, 'a, T> {
+    new_states: T,
     next_states: Vec<State<'c>>,
     completions_tx: CompletionsTransaction<'c, 'a>,
 }
@@ -140,7 +140,10 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         let mut step = EarleyStep {
             // As we expand the states, we'll generate more states that need to be processed.
             // we keep track of all generated states here to deduplicate them
-            new_states: vec![],
+            new_states: FromOldStates {
+                states: &states,
+                new_states: vec![],
+            },
             // The states for the next character get accumulated here, they'll need to be deduplicated
             // before we actually process the next character
             next_states: vec![],
@@ -149,19 +152,19 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         };
         // To optimize deduplicating the new states, we deduplicate in batches, so that nothing
         // before the current pass needs to be checked again.
-        let mut states_before_pass = step.new_states.len();
+        let mut states_before_pass = step.new_states.new_states.len();
         expand_states(
-            FromOldStates {
-                states: &states,
-                new_states: &mut step.new_states,
-            },
-            &mut step.completions_tx,
-            &mut step.next_states,
+            &mut step,
             0,
             cfg,
             cursor,
             src,
         );
+        let mut step = EarleyStep {
+            new_states: step.new_states.new_states,
+            next_states: step.next_states,
+            completions_tx: step.completions_tx,
+        };
 
         let mut loop_check = {
             let mut iters = 0;
@@ -180,9 +183,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
             let process_states_from = states_before_pass;
             states_before_pass = step.new_states.len();
             expand_states(
-                &mut step.new_states,
-                &mut step.completions_tx,
-                &mut step.next_states,
+                &mut step,
                 process_states_from,
                 cfg,
                 cursor,
@@ -244,14 +245,19 @@ fn isolate_new_elements(states: &mut Vec<State<'_>>, old_len: usize) {
     states.truncate(old_len + new_len);
 }
 fn expand_states<'c>(
-    mut transfer: impl StateGrouping<'c>,
-    completions: &mut CompletionsTransaction<'c, '_>,
-    next_states: &mut Vec<State<'c>>,
+    mut transfer: &mut EarleyStep<'c, '_, impl StateGrouping<'c>>,
+    // completions: &mut CompletionsTransaction<'c, '_>,
+    // next_states: &mut Vec<State<'c>>,
     i: usize,
     cfg: &'c Cfg,
     cursor: usize,
     src: &[u8],
 ) {
+    let EarleyStep {
+        new_states: transfer,
+        next_states,
+        completions_tx: completions,
+    } = &mut transfer;
     for i in i..transfer.read().len() {
         let state = transfer.read()[i];
         let Some(&sym) = state.remaining.get(0) else {
