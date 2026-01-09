@@ -31,7 +31,7 @@ macro_rules! cfg_rules {
     };
     {$cx:ident . $rulename:ident :: = $($t:tt)*} => {
         $cx.0.push(Rule {
-            parts: std::mem::replace(&mut $cx.1, Default::default()),
+            parts: std::mem::take(&mut $cx.1),
             for_nt: $cx.2,
         });
         $cx.2 = $rulename;
@@ -39,7 +39,7 @@ macro_rules! cfg_rules {
     };
     {$cx:ident .} => {
         $cx.0.push(Rule {
-            parts: std::mem::replace(&mut $cx.1, Default::default()),
+            parts: std::mem::take(&mut $cx.1),
             for_nt: $cx.2,
         });
     };
@@ -50,21 +50,21 @@ macro_rules! cfg {
         $first_rule:ident ::= $($rule_definition:tt)*
     } => {{
         let mut states = 256u32;
-        $(let $states = states; states += 1;)*
+        $(let $states = states; #[allow(unused_assignments)] { states += 1; })*
         let mut cx: (Vec<Rule>, Vec<u32>, u32) = (vec![], vec![], $first_rule);
         cfg_rules!(cx $($rule_definition)*);
         Cfg { rules: cx.0 }
     }};
 }
 struct Node {
-    transition: u32,
-    start: usize,
-    end: usize,
-    parent: usize,
-    // next_sibling: usize,
+    // transition: u32,
+    // start: usize,
+    // end: usize,
+    // parent: usize,
+    // // next_sibling: usize,
 }
 type Ast = Vec<Node>;
-type Symbol = u32;
+// type Symbol = u32;
 type NtSymbol = u32;
 // TODO: can switch this to encoding the sym id into the slice.
 // the standard presentation is that these store (Rule, rule_offset)
@@ -75,7 +75,7 @@ struct State<'a> {
     sym: NtSymbol,
     remaining: &'a [u32],
 }
-fn State(back_ref: usize, sym: NtSymbol, remaining: &[u32]) -> State<'_> {
+fn mk_state(back_ref: usize, sym: NtSymbol, remaining: &[u32]) -> State<'_> {
     State {
         back_ref,
         sym,
@@ -89,7 +89,7 @@ trait StateGrouping<'c> {
     fn read(&self) -> &Vec<State<'c>>;
     fn write(&mut self) -> &mut Vec<State<'c>>;
 }
-impl<'a, 'b> StateGrouping<'b> for &'a mut Vec<State<'b>> {
+impl<'b> StateGrouping<'b> for &'_ mut Vec<State<'b>> {
     fn read(&self) -> &Vec<State<'b>> {
         self
     }
@@ -97,7 +97,7 @@ impl<'a, 'b> StateGrouping<'b> for &'a mut Vec<State<'b>> {
         self
     }
 }
-impl<'a, 'b> StateGrouping<'b> for Vec<State<'b>> {
+impl<'b> StateGrouping<'b> for Vec<State<'b>> {
     fn read(&self) -> &Vec<State<'b>> {
         self
     }
@@ -127,7 +127,7 @@ struct EarleyStep<'c, 'a, T> {
 fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut states = cfg
         .rules_for(init_sym)
-        .map(|r| State(0, init_sym, &r.parts[..]))
+        .map(|r| mk_state(0, init_sym, &r.parts[..]))
         .collect::<Vec<_>>();
 
     // TODO: The completions should sorta have a GC pass. Especially for longer files,
@@ -198,7 +198,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
             let pending_end = states.len();
             for i in pending_start..pending_end {
                 let state = states[i];
-                if state.remaining.len() == 0 {
+                if state.remaining.is_empty() {
                     states.extend(completions.query(state.back_ref, state.sym));
                 }
             }
@@ -248,20 +248,20 @@ fn expand_states<'c>(
     } = &mut transfer;
     for i in i..transfer.read().len() {
         let state = transfer.read()[i];
-        let Some(&sym) = state.remaining.get(0) else {
+        let Some(&sym) = state.remaining.first() else {
             let new = transfer.write();
             new.extend(completions.query(state.back_ref, state.sym));
             continue;
         };
         if sym < 256 {
             if src[cursor] == sym as u8 {
-                next_states.push(State(state.back_ref, state.sym, &state.remaining[1..]));
+                next_states.push(mk_state(state.back_ref, state.sym, &state.remaining[1..]));
             }
         } else {
-            completions.push((sym, State(state.back_ref, state.sym, &state.remaining[1..])));
+            completions.push((sym, mk_state(state.back_ref, state.sym, &state.remaining[1..])));
             transfer
                 .write()
-                .extend(cfg.rules_for(sym).map(|r| State(cursor, sym, &r.parts[..])));
+                .extend(cfg.rules_for(sym).map(|r| mk_state(cursor, sym, &r.parts[..])));
         }
     }
 }
@@ -342,5 +342,5 @@ fn main() {
     };
     println!("{:?}", mycfg);
     mycfg.rules.sort_by_key(|rule| rule.for_nt);
-    let ast = parse_earley(&mycfg, "true or false and b  and not true".as_bytes(), 256);
+    let _ = parse_earley(&mycfg, "true or false and b  and not true".as_bytes(), 256);
 }
