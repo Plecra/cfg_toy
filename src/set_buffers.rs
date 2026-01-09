@@ -59,7 +59,7 @@ pub fn grow_ordered_set<T: Ord + Clone>(
 /// This implements the ability to extend a sorted set with new elements,
 /// you should insert a batch of new elements at the end, and give the index
 /// where the new elements start. They'll be deduplicated against the old elements.
-/// 
+///
 /// However, this function doesn't yet sort the new elements *into* the rest of the set,
 /// meaning the `set` vector is left with two sets in 0..old_len and old_len..end.
 /// This allows the caller to process the added elements.

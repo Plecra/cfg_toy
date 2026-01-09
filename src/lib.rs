@@ -1,10 +1,10 @@
+mod buffer_pair;
 mod completions;
 pub mod grammar;
-mod buffer_pair;
 mod set_buffers;
 
+use buffer_pair::{BufferPair, Transfer};
 use completions::{Completions, CompletionsTransaction};
-use buffer_pair::{Transfer, BufferPair};
 use set_buffers::{grow_ordered_set, isolate_new_elements, sorted_set};
 
 pub struct Node {
@@ -40,12 +40,15 @@ struct EarleyStep<'c, 'r> {
     completions_tx: CompletionsTransaction<'c, 'r>,
     next_states: Vec<State<'c>>,
 }
-// type EarleyStep<'a, T: StateGrouping<State<'a>>> = (T, Vec<State<'a>>, CompletionsTransaction<'a, 'a>);
 pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut states = cfg
         .rules_for(init_sym)
         .map(|r| mk_state(0, init_sym, &r.parts[..]))
         .collect::<Vec<_>>();
+
+    // This is kept between iterations for double buffering to
+    // save on allocating it.
+    let mut next_states = vec![];
 
     // TODO: The completions should sorta have a GC pass. Especially for longer files,
     // most of its content is completely unreferenced.
@@ -54,12 +57,13 @@ pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut completions = Completions::new(src.len());
 
     for &input_symbol in src {
+        println!("@ {:?}", states);
         let mut step = EarleyStep {
             cfg,
             input_symbol,
             // The states for the next character get accumulated here, they'll need to be deduplicated
             // before we actually process the next character
-            next_states: vec![],
+            next_states,
             // If any state transition is a prediction, we remember the completion for it to use later
             completions_tx: completions.add_group(),
         };
@@ -81,7 +85,10 @@ pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
             step.expand_states(states);
         });
         sorted_set(&mut step.next_states);
-        states = step.next_states;
+
+        let mut used_up_states = std::mem::replace(&mut states, step.next_states);
+        used_up_states.clear();
+        next_states = used_up_states;
     }
     grow_ordered_set(&mut states, |mut states| {
         for i in 0..states.read().len() {
