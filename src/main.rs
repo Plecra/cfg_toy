@@ -183,42 +183,28 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         sorted_set(&mut step.next_states);
         states = step.next_states;
     }
-    {
-        // algo sketch:
-        // loop
-        //   for every pending state,
-        //     follow the backref and create a new state
-        //   for every new state, deduplicate
-        //   the pending states are the new states
-        //   if pending states are none, break
-        //
-        states.sort();
-        let mut pending_start = 0;
-        loop {
-            let pending_end = states.len();
-            for i in pending_start..pending_end {
-                let state = states[i];
-                if state.remaining.is_empty() {
-                    states.extend(completions.query(state.back_ref, state.sym));
-                }
-            }
-            states[..pending_end].sort();
-
-            let (sorted, appended) = states.split_at_mut(pending_end);
-            appended.sort();
-            let new_len = dedup_wrt(appended, sorted, |s| s);
-            states.truncate(pending_end + new_len);
-            if states.len() == pending_end {
-                break;
-            }
-            pending_start = pending_end;
-        }
-    }
-    // the match state is (back_ref: 0, sym: 256), so will always be at the
-    // start
+    states.sort();
+    grow_ordered_set(&mut states, |state| {
+        completions.query(state.back_ref, state.sym)
+    });
+    // the match state is (back_ref: 0, sym: 256), so will always be at the start
     println!("{:?}", states[0]);
 
     vec![]
+}
+// Find the transitive closure of a relation
+fn grow_ordered_set<'c, I: Iterator<Item = State<'c>>>(states: &mut Vec<State<'c>>, mut rel: impl FnMut(State<'c>) -> I) {
+    let mut pending_start = 0;
+    while pending_start < states.len() {
+        let pending_end = states.len();
+        for i in pending_start..pending_end {
+            let state = states[i];
+            states.extend(rel(state));
+        }
+        states[..pending_end].sort();
+        isolate_new_elements(states, pending_end);
+        pending_start = pending_end;
+    }
 }
 fn isolate_new_elements(states: &mut Vec<State<'_>>, old_len: usize) {
     let (old, new) = states.split_at_mut(old_len);
