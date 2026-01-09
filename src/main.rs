@@ -193,12 +193,15 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     vec![]
 }
 // Find the transitive closure of a relation
-fn grow_ordered_set<'c, I: Iterator<Item = State<'c>>>(states: &mut Vec<State<'c>>, mut rel: impl FnMut(State<'c>) -> I) {
+fn grow_ordered_set<T: Ord + Clone, I: Iterator<Item = T>>(
+    states: &mut Vec<T>,
+    mut rel: impl FnMut(T) -> I,
+) {
     let mut pending_start = 0;
     while pending_start < states.len() {
         let pending_end = states.len();
         for i in pending_start..pending_end {
-            let state = states[i];
+            let state = states[i].clone();
             states.extend(rel(state));
         }
         states[..pending_end].sort();
@@ -206,7 +209,7 @@ fn grow_ordered_set<'c, I: Iterator<Item = State<'c>>>(states: &mut Vec<State<'c
         pending_start = pending_end;
     }
 }
-fn isolate_new_elements(states: &mut Vec<State<'_>>, old_len: usize) {
+fn isolate_new_elements<T: Ord>(states: &mut Vec<T>, old_len: usize) {
     let (old, new) = states.split_at_mut(old_len);
     new.sort();
     let mut check = 0;
@@ -220,8 +223,6 @@ fn isolate_new_elements(states: &mut Vec<State<'_>>, old_len: usize) {
 }
 fn expand_states<'c>(
     mut transfer: &mut EarleyStep<'c, '_, impl StateGrouping<'c>>,
-    // completions: &mut CompletionsTransaction<'c, '_>,
-    // next_states: &mut Vec<State<'c>>,
     i: usize,
     cfg: &'c Cfg,
     cursor: usize,
@@ -234,42 +235,40 @@ fn expand_states<'c>(
     } = &mut transfer;
     for i in i..transfer.read().len() {
         let state = transfer.read()[i];
-        let Some(&sym) = state.remaining.first() else {
-            let new = transfer.write();
-            new.extend(completions.query(state.back_ref, state.sym));
-            continue;
-        };
-        if sym < 256 {
-            if src[cursor] == sym as u8 {
-                next_states.push(mk_state(state.back_ref, state.sym, &state.remaining[1..]));
-            }
-        } else {
-            completions.push((sym, mk_state(state.back_ref, state.sym, &state.remaining[1..])));
-            transfer
-                .write()
-                .extend(cfg.rules_for(sym).map(|r| mk_state(cursor, sym, &r.parts[..])));
+        expand_states_(state, transfer, completions, src, cursor, next_states, cfg);
+    }
+}
+fn expand_states_<'c>(
+    state: State<'c>, 
+    transfer: &mut impl StateGrouping<'c>,
+    completions: &mut CompletionsTransaction<'c, '_>,
+    src: &[u8],
+    cursor: usize,
+    next_states: &mut Vec<State<'c>>,
+    cfg: &'c Cfg,) {
+
+    let Some(&sym) = state.remaining.first() else {
+        let new = transfer.write();
+        new.extend(completions.query(state.back_ref, state.sym));
+        return;
+    };
+    if sym < 256 {
+        if src[cursor] == sym as u8 {
+            next_states.push(mk_state(state.back_ref, state.sym, &state.remaining[1..]));
         }
+    } else {
+        completions.push((
+            sym,
+            mk_state(state.back_ref, state.sym, &state.remaining[1..]),
+        ));
+        transfer.write().extend(
+            cfg.rules_for(sym)
+                .map(|r| mk_state(cursor, sym, &r.parts[..])),
+        );
     }
 }
 fn vec_dedup<T: PartialEq>(vec: &mut Vec<T>) {
     retain_with_context(vec, |cx, v| cx.last() != Some(v));
-}
-fn dedup_wrt<T, K: PartialEq + Ord>(slice: &mut [T], wrt: &[T], key: impl Fn(&T) -> &K) -> usize {
-    let mut write_target = 0;
-    let mut check = 0;
-    for read_head in 0..slice.len() {
-        let new_val = key(&slice[read_head]);
-        if write_target == 0 || key(&slice[write_target - 1]) != new_val {
-            while check < wrt.len() && key(&wrt[check]) < new_val {
-                check += 1;
-            }
-            if check == wrt.len() || key(&wrt[check]) != new_val {
-                slice.swap(read_head, write_target);
-                write_target += 1;
-            }
-        }
-    }
-    write_target
 }
 fn sorted_set<T: PartialEq + Ord>(vec: &mut Vec<T>) {
     vec.sort();
