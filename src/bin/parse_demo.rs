@@ -294,21 +294,24 @@ r#"[{}]"#
     //     primary ::= ident .
     // };
 
-let (test_grammar, state_names) = cfg_toy::cfg! {
-    start list ;
-    start ::= list .
-    list ::= "a" .
-    list ::= "a" list .
-};
-let mut trace = vec![];
-let src = b"aaa";
-    // let src = cfg_toy::cast_buf(src);
-    let completions = cfg_toy::parse_earley(&test_grammar, src, 256, &mut trace);
-    for &(start, end, state) in &trace {
-        println!("{} {:?}", state_names[state as usize - 256], start..end);
-    }
-    println!("{:?}", completions);
+    parse_succeeds(&cfg_toy::cfg! {
+        start list ;
+        start ::= list .
+        list ::= "a" .
+        list ::= "a" list .
+    }.0, b"aaa", 256);
+    parse_succeeds(&cfg_toy::cfg! {
+        start flexible ;
+        start ::= "a" flexible "c" . // abb succeeds until c.
+        start ::= "a" "b" flexible . // abb works with only a single b
+        flexible ::= "b" "b" .
+        flexible ::= "b"  .
+    }.0,  b"abb", 256);
+}
+
+fn parse_succeeds(grammar: &cfg_toy::grammar::Cfg<u32>, src: &[u8], init_sym: u32) {
+    let mut trace = vec![];
+    let completions = cfg_toy::parse_earley(&grammar, src, 256, &mut trace);
     trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
-    let ast = cfg_toy::trace_to_ast(&test_grammar, src, &trace, &completions, &256);
-    println!("{ast:?}");
+    let ast = cfg_toy::trace_to_ast(&grammar, src, &trace, &completions, &256);
 }
