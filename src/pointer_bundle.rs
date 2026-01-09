@@ -1,4 +1,3 @@
-
 // Here's some unfortunate complexity, this boilerplate is just responsible
 // for allowing us to read + write to the same reference.
 pub(crate) trait StateGrouping<T> {

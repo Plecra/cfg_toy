@@ -30,5 +30,5 @@ fn simple_logic() {
     };
     println!("{:?}", mycfg);
     mycfg.rules.sort_by_key(|rule| rule.for_nt);
-    let _ = cfg_toy::parse_earley(&mycfg, "true or false".as_bytes(), 256);
+    let _ = cfg_toy::parse_earley(&mycfg, "true or false and not false or bb".as_bytes(), 256);
 }

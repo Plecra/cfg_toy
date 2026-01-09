@@ -1,4 +1,3 @@
-
 #[derive(Debug)]
 pub struct Rule {
     pub for_nt: u32,

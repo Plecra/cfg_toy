@@ -1,11 +1,11 @@
 mod completions;
+pub mod grammar;
 mod pointer_bundle;
 mod set_buffers;
-pub mod grammar;
 
-use pointer_bundle::{StateGrouping, FromOldStates};
-use set_buffers::{grow_ordered_set, sorted_set, isolate_new_elements};
 use completions::{Completions, CompletionsTransaction};
+use pointer_bundle::{FromOldStates, StateGrouping};
+use set_buffers::{grow_ordered_set, isolate_new_elements, sorted_set};
 
 pub struct Node {
     // transition: u32,
@@ -83,7 +83,6 @@ pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
         sorted_set(&mut step.next_states);
         states = step.next_states;
     }
-    states.sort();
     grow_ordered_set(&mut states, |mut states| {
         for i in 0..states.read().len() {
             let state = states.read()[i];
@@ -94,7 +93,10 @@ pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
     });
     // the match state is (back_ref: 0, sym: 256), so will always be at the start
     println!("{:?}", states.first());
-    assert_eq!(states.first().map(|s| (s.back_ref, s.sym)), Some((0, init_sym)));
+    assert_eq!(
+        states.first().map(|s| (s.back_ref, s.sym)),
+        Some((0, init_sym))
+    );
 
     vec![]
 }

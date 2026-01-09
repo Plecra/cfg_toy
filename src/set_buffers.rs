@@ -1,4 +1,3 @@
-
 pub struct InternalSlice<'a, T> {
     slice: &'a mut Vec<T>,
     range: std::ops::Range<usize>,

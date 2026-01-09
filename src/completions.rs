@@ -20,7 +20,11 @@ impl<'a> Completions<'a> {
     pub(crate) fn add_group(&mut self) -> CompletionsTransaction<'a, '_> {
         CompletionsTransaction::new(self)
     }
-    pub(crate) fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
+    pub(crate) fn query(
+        &self,
+        back_ref: usize,
+        sym: NtSymbol,
+    ) -> impl Iterator<Item = State<'a>> + '_ {
         let start = self.completion_index[back_ref];
         let end = self.completion_index[back_ref + 1];
         let start_of_comps = start + self.completions[start..end].partition_point(|c| c.0 < sym);
@@ -44,7 +48,11 @@ impl<'a, 'b> CompletionsTransaction<'a, 'b> {
             start_len,
         }
     }
-    pub(crate) fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
+    pub(crate) fn query(
+        &self,
+        back_ref: usize,
+        sym: NtSymbol,
+    ) -> impl Iterator<Item = State<'a>> + '_ {
         self.completions.query(back_ref, sym)
     }
     pub(crate) fn push(&mut self, completion: Completion<'a>) {
