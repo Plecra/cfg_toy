@@ -21,7 +21,7 @@ fn simple_logic() {
         // Ambiguous rules to test parse forest handling
         ambiguous_1 ::= "then".
         ambiguous_2 ::= "theatre".
-        
+
         expr ::= and_expr or expr.
         expr ::= and_expr gap ambiguous_1.
         expr ::= and_expr gap ambiguous_2.
@@ -36,7 +36,12 @@ fn simple_logic() {
     };
     println!("{:?}", mycfg);
     mycfg.rules.sort_by_key(|rule| rule.for_nt);
-    cfg_toy::parse_earley(&mycfg, "true or false and not false or bb".as_bytes(), 256, ());
+    cfg_toy::parse_earley(
+        &mycfg,
+        "true or false and not false or bb".as_bytes(),
+        256,
+        (),
+    );
     cfg_toy::parse_earley(&mycfg, "true then".as_bytes(), 256, ());
     let src = "true then".as_bytes();
     let init_sym = 256;

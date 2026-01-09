@@ -1,4 +1,3 @@
-
 use crate::buffer_pair::{BufferPair, Transfer};
 use crate::completions::{Completions, CompletionsTransaction};
 use crate::set_buffers::{grow_ordered_set, isolate_new_elements, sorted_set};
@@ -103,7 +102,9 @@ pub fn parse_earley(cfg: &crate::grammar::Cfg, src: &[u8], init_sym: u32, mut tr
             if state.remaining.is_empty() {
                 // This state has recognized its nontermininal starting at state.back_ref
                 trace.at(src.len()).completed(state.back_ref, state.sym);
-                states.write().extend(completions.query(state.back_ref, state.sym));
+                states
+                    .write()
+                    .extend(completions.query(state.back_ref, state.sym));
                 continue;
             }
         }

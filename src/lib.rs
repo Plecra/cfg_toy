@@ -1,12 +1,12 @@
 mod buffer_pair;
 mod completions;
 pub mod grammar;
-mod set_buffers;
 mod recognizer;
-pub use recognizer::{parse_earley, Trace};
+mod set_buffers;
+pub use recognizer::{Trace, parse_earley};
 
 // Build an AST for a trace of an unambiguous parse.
-// That is, a parse where all ambiguities have been resolved, in examples like 
+// That is, a parse where all ambiguities have been resolved, in examples like
 // S ::= "then"
 // S ::= "that"
 //
@@ -31,8 +31,12 @@ pub fn trace_to_ast(
             println!("{state:?}: {rule:?}");
             if matched_rule(span, start, trace, &rule.parts, &mut stack) {
                 println!("found rule: {:?}", &stack[stack_len..]);
-                if let Some((_, first_child)) = dbg!((stack_len < stack.len()).then_some(()).and_then(|_| stack.last()))
-                    && *first_child == state {
+                if let Some((_, first_child)) = dbg!(
+                    (stack_len < stack.len())
+                        .then_some(())
+                        .and_then(|_| stack.last())
+                ) && *first_child == state
+                {
                     // left-recursive without progress
                     // FIXME: This can actually happen recursively so need to add handling for that too
                     continue;
@@ -56,10 +60,10 @@ pub fn trace_to_ast(
 }
 fn matched_rule<'a>(
     mut src: &'a [u8],
-    offset: usize, 
+    offset: usize,
     mut trace: &[(usize, usize, NtSymbol)],
     rule: &[u32],
-    children: &mut Vec<(&'a [u8], NtSymbol)>
+    children: &mut Vec<(&'a [u8], NtSymbol)>,
 ) -> bool {
     for &part in rule.iter().rev() {
         if part < 256 {
@@ -71,9 +75,10 @@ fn matched_rule<'a>(
             // nonterminal
             let sym = part;
             // find the last occurrence of this symbol in the trace that ends at src_index + 1
-            let Some((start, end, _)) = trace.iter().rfind(|&&(_, end, s)| {
-                s == sym && end == (src.len() + offset)
-            }) else {
+            let Some((start, end, _)) = trace
+                .iter()
+                .rfind(|&&(_, end, s)| s == sym && end == (src.len() + offset))
+            else {
                 return false;
             };
             println!("pushing {start}..{end} for sym {sym}");
