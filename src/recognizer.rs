@@ -81,7 +81,6 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
     let mut completions = Completions::new(src.len());
 
     for cursor in 0..src.len() {
-        println!("visiting {}", cursor);
         let mut step = EarleyStep {
             cfg,
             input_symbol: &src[cursor],
@@ -107,7 +106,7 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
 
         isolate_new_elements(&mut new_states, states_before_pass);
         grow_ordered_set(&mut new_states, |states| {
-            println!("{:?}", states.read());
+            // println!("{:?}", states.read());
             step.expand_states(states);
         });
         sorted_set(&mut step.next_states);
@@ -115,6 +114,9 @@ pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
         let mut used_up_states = std::mem::replace(&mut states, step.next_states);
         used_up_states.clear();
         next_states = used_up_states;
+        if states.is_empty() {
+            panic!("no states left at cursor {}", cursor);
+        }
     }
     grow_ordered_set(&mut states, |mut states| {
         for i in 0..states.read().len() {
@@ -162,14 +164,14 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
     fn expand_state(&mut self, state: State<'c, Symbol>, new: &mut Vec<State<'c, Symbol>>) {
         let Some(sym) = state.remaining.first() else {
             // This state has recognized its nontermininal starting at state.back_ref
-            println!("done with {:?}", state);
+            // println!("done with {:?}", state);
             self.trace.completed(state.back_ref, state.sym);
             new.extend(self.completions_tx.query(state.back_ref, state.sym));
             return;
         };
         match sym.as_part() {
             super::Either::Ok(sym) => {
-                println!("trying to match sym {:?}", *sym.borrow());
+                // println!("trying to match sym {:?} == {:?}", self.input_symbol, *sym.borrow());
                 // Direct matches on the input symbol advance the state,
                 // otherwise this branch fails to parse and we drop the state
                 if self.input_symbol == sym.borrow() {
