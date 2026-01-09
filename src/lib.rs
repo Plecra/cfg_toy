@@ -4,7 +4,7 @@ mod pointer_bundle;
 mod set_buffers;
 
 use completions::{Completions, CompletionsTransaction};
-use pointer_bundle::{FromOldStates, StateGrouping};
+use pointer_bundle::{Transfer, BufferPair};
 use set_buffers::{grow_ordered_set, isolate_new_elements, sorted_set};
 
 pub struct Node {
@@ -65,7 +65,7 @@ pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
         };
         // As we expand the states, we'll generate more states that need to be processed.
         // we keep track of all generated states here to deduplicate them
-        let mut transfer = FromOldStates {
+        let mut transfer = Transfer {
             states: &states,
             new_states: vec![],
         };
@@ -101,7 +101,7 @@ pub fn parse_earley(cfg: &grammar::Cfg, src: &[u8], init_sym: u32) -> Ast {
     vec![]
 }
 impl<'c> EarleyStep<'c, '_> {
-    fn expand_states(&mut self, mut transfer: impl StateGrouping<State<'c>>) {
+    fn expand_states(&mut self, mut transfer: impl BufferPair<State<'c>>) {
         for i in 0..transfer.read().len() {
             let state = transfer.read()[i];
             self.expand_state(state, transfer.write());

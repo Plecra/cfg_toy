@@ -14,7 +14,7 @@ pub(crate) struct InternalSlice<'a, T> {
     pub(crate) slice: &'a mut Vec<T>,
     pub(crate) range: std::ops::Range<usize>,
 }
-impl<'a, T> super::StateGrouping<T> for InternalSlice<'a, T> {
+impl<'a, T> super::BufferPair<T> for InternalSlice<'a, T> {
     fn read(&self) -> &[T] {
         &self.slice[self.range.clone()]
     }
