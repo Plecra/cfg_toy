@@ -1,14 +1,14 @@
 #[derive(Debug)]
-pub struct Rule {
+pub struct Rule<Symbol> {
     pub for_nt: u32,
-    pub parts: Vec<u32>,
+    pub parts: Vec<Symbol>,
 }
 #[derive(Debug)]
-pub struct Cfg {
-    pub rules: Vec<Rule>,
+pub struct Cfg<Symbol> {
+    pub rules: Vec<Rule<Symbol>>,
 }
-impl Cfg {
-    pub(crate) fn rules_for(&self, nt: u32) -> impl Iterator<Item = &'_ Rule> + '_ {
+impl<Symbol> Cfg<Symbol> {
+    pub(crate) fn rules_for(&self, nt: u32) -> impl Iterator<Item = &'_ Rule<Symbol>> + '_ {
         let start = self.rules.partition_point(|r| r.for_nt < nt);
         let end = self.rules.partition_point(|r| r.for_nt <= nt);
         // TODO: bench? this is the same as iterating while we're in the group
@@ -52,7 +52,7 @@ macro_rules! cfg {
         let mut state_names: Vec<&'static str> = vec![];
         let mut states = 256u32;
         $(let $states = states; #[allow(unused_assignments)] { states += 1; }; state_names.push(stringify!($states));)*
-        let mut cx: (Vec<$crate::grammar::Rule>, Vec<u32>, u32) = (vec![], vec![], $first_rule);
+        let mut cx: (Vec<$crate::grammar::Rule<u32>>, Vec<u32>, u32) = (vec![], vec![], $first_rule);
         $crate::cfg_rules!(cx $($rule_definition)*);
         ($crate::grammar::Cfg { rules: cx.0 }, state_names)
     }};

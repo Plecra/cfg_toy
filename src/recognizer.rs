@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use crate::buffer_pair::{BufferPair, Transfer};
 use crate::completions::{Completions, CompletionsTransaction};
 use crate::set_buffers::{grow_ordered_set, isolate_new_elements, sorted_set};
@@ -24,14 +26,23 @@ impl TraceAt for () {
 pub(crate) type NtSymbol = u32;
 // TODO: can switch this to encoding the sym id into the slice.
 // the standard presentation is that these store (Rule, rule_offset)
-pub(crate) type Completion<'a> = (NtSymbol, State<'a>);
-#[derive(Copy, Clone, Debug, PartialOrd, Ord, PartialEq, Eq)]
-pub(crate) struct State<'a> {
+pub(crate) type Completion<'a, Symbol> = (NtSymbol, State<'a, Symbol>);
+#[derive(Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+pub(crate) struct State<'a, Symbol> {
     back_ref: usize,
     sym: NtSymbol,
-    remaining: &'a [u32],
+    remaining: &'a [Symbol],
 }
-fn mk_state(back_ref: usize, sym: NtSymbol, remaining: &[u32]) -> State<'_> {
+impl<'a, Symbol> Clone for State<'a, Symbol> {
+    fn clone(&self) -> Self {
+        Self {
+            back_ref: self.back_ref,
+            sym: self.sym,
+            remaining: self.remaining,
+        }
+    }
+}
+fn mk_state<Symbol>(back_ref: usize, sym: NtSymbol, remaining: &[Symbol]) -> State<'_, Symbol> {
     State {
         back_ref,
         sym,
@@ -39,14 +50,20 @@ fn mk_state(back_ref: usize, sym: NtSymbol, remaining: &[u32]) -> State<'_> {
     }
 }
 
-struct EarleyStep<'c, 'r, T> {
-    cfg: &'c crate::grammar::Cfg,
-    input_symbol: u8,
-    completions_tx: CompletionsTransaction<'c, 'r>,
-    next_states: Vec<State<'c>>,
+struct EarleyStep<'c, 'r, T, Symbol: Ord + super::CfgSymbol> {
+    cfg: &'c crate::grammar::Cfg<Symbol>,
+    // TODO(opts): Try making this `u8` instead of `&u8` while parsing a normal buffer
+    input_symbol: &'c Symbol::Terminal,
+    completions_tx: CompletionsTransaction<'c, 'r, Symbol>,
+    next_states: Vec<State<'c, Symbol>>,
     trace: T,
 }
-pub fn parse_earley(cfg: &crate::grammar::Cfg, src: &[u8], init_sym: u32, mut trace: impl Trace) {
+pub fn parse_earley<Symbol: super::CfgSymbol + Ord>(
+    cfg: &crate::grammar::Cfg<Symbol>,
+    src: &[Symbol::Terminal],
+    init_sym: u32,
+    mut trace: impl Trace,
+) {
     let mut states = cfg
         .rules_for(init_sym)
         .map(|r| mk_state(0, init_sym, &r.parts[..]))
@@ -65,7 +82,7 @@ pub fn parse_earley(cfg: &crate::grammar::Cfg, src: &[u8], init_sym: u32, mut tr
     for cursor in 0..src.len() {
         let mut step = EarleyStep {
             cfg,
-            input_symbol: src[cursor],
+            input_symbol: &src[cursor],
             // The states for the next character get accumulated here, they'll need to be deduplicated
             // before we actually process the next character
             next_states,
@@ -98,7 +115,7 @@ pub fn parse_earley(cfg: &crate::grammar::Cfg, src: &[u8], init_sym: u32, mut tr
     }
     grow_ordered_set(&mut states, |mut states| {
         for i in 0..states.read().len() {
-            let state = states.read()[i];
+            let state = states.read()[i].clone();
             if state.remaining.is_empty() {
                 // This state has recognized its nontermininal starting at state.back_ref
                 trace.at(src.len()).completed(state.back_ref, state.sym);
@@ -110,46 +127,52 @@ pub fn parse_earley(cfg: &crate::grammar::Cfg, src: &[u8], init_sym: u32, mut tr
         }
     });
     // the match state is (back_ref: 0, sym: 256), so will always be at the start
-    println!("{:?}", states.first());
+    // println!("{:?}", states.first());
     assert_eq!(
         states.first().map(|s| (s.back_ref, s.sym)),
         Some((0, init_sym))
     );
 }
-impl<'c, T: TraceAt> EarleyStep<'c, '_, T> {
-    fn expand_states(&mut self, mut transfer: impl BufferPair<State<'c>>) {
+impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbol> {
+    fn expand_states(&mut self, mut transfer: impl BufferPair<State<'c, Symbol>>) {
         for i in 0..transfer.read().len() {
-            let state = transfer.read()[i];
+            let state = transfer.read()[i].clone();
             self.expand_state(state, transfer.write());
         }
     }
-    fn expand_state(&mut self, state: State<'c>, new: &mut Vec<State<'c>>) {
-        let Some(&sym) = state.remaining.first() else {
+    fn expand_state(&mut self, state: State<'c, Symbol>, new: &mut Vec<State<'c, Symbol>>) {
+        let Some(sym) = state.remaining.first() else {
             // This state has recognized its nontermininal starting at state.back_ref
             self.trace.completed(state.back_ref, state.sym);
             new.extend(self.completions_tx.query(state.back_ref, state.sym));
             return;
         };
-        if sym < 256 {
-            // Direct matches on the input symbol advance the state,
-            // otherwise this branch fails to parse and we drop the state
-            if self.input_symbol == sym as u8 {
-                self.next_states
-                    .push(mk_state(state.back_ref, state.sym, &state.remaining[1..]));
+        match sym.as_part() {
+            super::Either::Ok(sym) => {
+                // Direct matches on the input symbol advance the state,
+                // otherwise this branch fails to parse and we drop the state
+                if self.input_symbol == sym.borrow() {
+                    self.next_states.push(mk_state(
+                        state.back_ref,
+                        state.sym,
+                        &state.remaining[1..],
+                    ));
+                }
             }
-        } else {
-            // To match a nonterminal, expand all the rules for it,
-            // and remember our state as a completion if the nonterminal successfully
-            // parses.
-            self.completions_tx.push((
-                sym,
-                mk_state(state.back_ref, state.sym, &state.remaining[1..]),
-            ));
-            new.extend(
-                self.cfg
-                    .rules_for(sym)
-                    .map(|r| mk_state(self.completions_tx.batch_id(), sym, &r.parts[..])),
-            );
+            super::Either::Err(sym) => {
+                // To match a nonterminal, expand all the rules for it,
+                // and remember our state as a completion if the nonterminal successfully
+                // parses.
+                self.completions_tx.push((
+                    sym,
+                    mk_state(state.back_ref, state.sym, &state.remaining[1..]),
+                ));
+                new.extend(
+                    self.cfg
+                        .rules_for(sym)
+                        .map(|r| mk_state(self.completions_tx.batch_id(), sym, &r.parts[..])),
+                );
+            }
         }
     }
 }

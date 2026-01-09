@@ -23,10 +23,7 @@ impl<'a, T> super::buffer_pair::BufferPair<T> for InternalSlice<'a, T> {
     }
 }
 // Find the transitive closure of a relation
-pub fn grow_ordered_set<T: Ord + Clone>(
-    states: &mut Vec<T>,
-    mut rel: impl FnMut(InternalSlice<'_, T>),
-) {
+pub fn grow_ordered_set<T: Ord>(states: &mut Vec<T>, mut rel: impl FnMut(InternalSlice<'_, T>)) {
     // Just putting an arbitrary bound on the number of iterations we'll
     // try to saturate the reachable set in. Could be way higher
     let mut loop_check = {

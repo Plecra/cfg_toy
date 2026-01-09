@@ -3,6 +3,8 @@ mod completions;
 pub mod grammar;
 mod recognizer;
 mod set_buffers;
+use std::borrow::Borrow;
+
 pub use recognizer::{Trace, parse_earley};
 
 // Build an AST for a trace of an unambiguous parse.
@@ -14,28 +16,24 @@ pub use recognizer::{Trace, parse_earley};
 // because it'll be resolved by the time we need to build the AST: one of the two will have been invalid
 // The trace should be sorted by (start, sym). This is not inherentely true of the trace we build during parsing.
 // It's sorted by `end` and arbitrary sym order.
-pub fn trace_to_ast(
-    cfg: &crate::grammar::Cfg,
-    src: &[u8],
+pub fn trace_to_ast<Symbol: CfgSymbol>(
+    cfg: &crate::grammar::Cfg<Symbol>,
+    src: &[Symbol::Terminal],
     trace: &[(usize, usize, NtSymbol)],
     init_sym: u32,
 ) -> Ast {
     let mut ast = vec![];
     let mut stack = vec![(src, init_sym)];
     'next_node: while let Some((span, state)) = stack.pop() {
-        println!("{state:?} under {stack:?}");
         let rules = cfg.rules_for(state);
         let start = span.as_ptr() as usize - src.as_ptr() as usize;
         for rule in rules {
             let stack_len = stack.len();
-            println!("{state:?}: {rule:?}");
             if matched_rule(span, start, trace, &rule.parts, &mut stack) {
-                println!("found rule: {:?}", &stack[stack_len..]);
-                if let Some((_, first_child)) = dbg!(
-                    (stack_len < stack.len())
-                        .then_some(())
-                        .and_then(|_| stack.last())
-                ) && *first_child == state
+                if let Some((_, first_child)) = (stack_len < stack.len())
+                    .then_some(())
+                    .and_then(|_| stack.last())
+                    && *first_child == state
                 {
                     // left-recursive without progress
                     // FIXME: This can actually happen recursively so need to add handling for that too
@@ -49,7 +47,6 @@ pub fn trace_to_ast(
                     end,
                     children: stack.len() - stack_len,
                 });
-                println!("wat {stack:?}");
                 continue 'next_node;
             }
             stack.truncate(stack_len);
@@ -58,34 +55,57 @@ pub fn trace_to_ast(
     }
     ast
 }
-fn matched_rule<'a>(
-    mut src: &'a [u8],
+type Either<L, R> = std::result::Result<L, R>;
+
+/// This is a very blunt approach just to line all the types
+/// up right for making the original (u8, u32) version generic
+pub trait CfgSymbol {
+    type Terminal: PartialEq;
+    type TerminalRef<'a>: std::borrow::Borrow<Self::Terminal>
+    where
+        Self: 'a;
+    fn as_part(&self) -> Either<Self::TerminalRef<'_>, NtSymbol>;
+}
+impl CfgSymbol for u32 {
+    type Terminal = u8;
+    type TerminalRef<'a> = u8;
+    fn as_part(&self) -> Either<Self::TerminalRef<'_>, NtSymbol> {
+        if *self < 256 {
+            Either::Ok(*self as u8)
+        } else {
+            Either::Err(*self)
+        }
+    }
+}
+fn matched_rule<'a, Symbol: CfgSymbol>(
+    mut src: &'a [Symbol::Terminal],
     offset: usize,
     mut trace: &[(usize, usize, NtSymbol)],
-    rule: &[u32],
-    children: &mut Vec<(&'a [u8], NtSymbol)>,
+    rule: &[Symbol],
+    children: &mut Vec<(&'a [Symbol::Terminal], NtSymbol)>,
 ) -> bool {
-    for &part in rule.iter().rev() {
-        if part < 256 {
-            if src.last() != Some(&(part as u8)) {
-                return false;
+    for part in rule.iter().rev() {
+        match part.as_part() {
+            Either::Ok(part) => {
+                if src.last() != Some(part.borrow()) {
+                    return false;
+                }
+                src = &src[..src.len() - 1];
             }
-            src = &src[..src.len() - 1];
-        } else {
-            // nonterminal
-            let sym = part;
-            // find the last occurrence of this symbol in the trace that ends at src_index + 1
-            let Some((start, end, _)) = trace
-                .iter()
-                .rfind(|&&(_, end, s)| s == sym && end == (src.len() + offset))
-            else {
-                return false;
-            };
-            println!("pushing {start}..{end} for sym {sym}");
-            children.push((&src[*start - offset..*end - offset], sym));
-            src = &src[..start - offset];
-            let i = trace.partition_point(|(_, match_end, _)| match_end <= start);
-            trace = &trace[..i];
+            Either::Err(sym) => {
+                // find the last occurrence of this symbol in the trace that ends at src_index + 1
+                let Some((start, end, _)) = trace
+                    .iter()
+                    .rfind(|&&(_, end, s)| s == sym && end == (src.len() + offset))
+                else {
+                    return false;
+                };
+                println!("pushing {start}..{end} for sym {sym}");
+                children.push((&src[*start - offset..*end - offset], sym));
+                src = &src[..start - offset];
+                let i = trace.partition_point(|(_, match_end, _)| match_end <= start);
+                trace = &trace[..i];
+            }
         }
     }
     true
