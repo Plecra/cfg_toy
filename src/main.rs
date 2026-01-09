@@ -104,8 +104,27 @@ impl<'a, 'b> StateGrouping<'b> for FromOldStates<'a, 'b> {
     }
 }
 
-
-
+// Semantically, this is a `BTreeMap<(usize, NtSymbol), State<'a>>`
+// It's implemented via a flat buffer containing all the entries in correct order,
+// and the completion index for locating each value of `usize`. This
+// provides range queries for `(i, sym)` efficiently.
+struct Completions<'a> {
+    completions: Vec<Completion<'a>>,
+    completion_index: Vec<usize>,
+}
+impl<'a> Completions<'a> {
+    fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
+        let start = self.completion_index[back_ref];
+        let end = self.completion_index[back_ref + 1];
+        let start_of_comps = start + self.completions[start..end]
+            .partition_point(|c| c.0 < sym);
+        let end_of_comps = start + self.completions[start..end]
+            .partition_point(|c| c.0 <= sym);
+        self.completions[start_of_comps..end_of_comps]
+            .iter()
+            .map(|c| c.1)
+    }
+}
 fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut states = cfg
         .rules_for(init_sym)
@@ -117,17 +136,22 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     // most of its content is completely unreferenced.
     // Currently using binary search maps due to the need for range queries, it'd be totally sensible
     // to revisit that
-    let mut completions: Vec<Completion> = vec![];
-    let mut completion_index: Vec<usize> = Vec::with_capacity(src.len());
-    completion_index.push(0);
+    // let mut completions: Vec<Completion> = vec![];
+    // let mut completion_index: Vec<usize> = Vec::with_capacity(src.len());
+    // completion_index.push(0);
+    let mut completions = Completions {
+        completions: vec![],
+        completion_index: Vec::with_capacity(src.len()),
+    };
+    completions.completion_index.push(0);
     
     for cursor in 0..src.len() {
         println!("@{cursor} {states:?}");
-        let base = completions.len();
+        let base = completions.completions.len();
         let mut next_states = vec![];
         let mut new_states = vec![];
         let mut states_before_pass = new_states.len();
-        expand_states(FromOldStates { states: &states, new_states: &mut new_states }, 0, &mut completions, &mut completion_index, &mut next_states, cfg, cursor, src);
+        expand_states(FromOldStates { states: &states, new_states: &mut new_states }, 0, &mut completions, &mut next_states, cfg, cursor, src);
         
         let mut loop_check = {
             let mut iters = 0;
@@ -148,7 +172,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
                 break;
             }
             states_before_pass = new_states.len();
-            expand_states(&mut new_states, i, &mut completions, &mut completion_index, &mut next_states, cfg, cursor, src);
+            expand_states(&mut new_states, i, &mut completions, &mut next_states, cfg, cursor, src);
             new_states[..states_before_pass].sort();
             loop_check();
         }
@@ -156,8 +180,8 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         states.sort();
         let new_len = dedup(&mut states, |s| s);
         states.truncate(new_len);
-        completions[base..].sort();
-        completion_index.push(completions.len());
+        completions.completions[base..].sort();
+        completions.completion_index.push(completions.completions.len());
     }
     {
         // algo sketch:
@@ -168,33 +192,22 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         //   the pending states are the new states
         //   if pending states are none, break
         // 
-        let mut pending_start = 0;
         states.sort();
+        let mut pending_start = 0;
         loop {
             let pending_end = states.len();
-            let mut i = pending_start;
-            while i < pending_end {
+            for i in pending_start..pending_end {
                 let state = states[i];
-                if state.remaining.len() != 0 {
-                    i += 1;
-                    continue;
+                if state.remaining.len() == 0 {
+                    states.extend(completions.query(state.back_ref, state.sym));
                 }
-                let start = completion_index[state.back_ref];
-                let end = completion_index[state.back_ref + 1];
-                let start_of_comps = start + completions[start..end]
-                    .partition_point(|c| c.0 < state.sym);
-                states.extend(completions[start_of_comps..]
-                    .iter()
-                    .take_while(|c| c.0 == state.sym)
-                    .map(|c| c.1));
-                i += 1;
             }
             states[..pending_end].sort();
             
             let (sorted, appended) = states.split_at_mut(pending_end);
             appended.sort();
             let new_len = dedup_wrt(appended, sorted, |s| s);
-            states.truncate(i + new_len);
+            states.truncate(pending_end + new_len);
             if states.len() == pending_end {
                 break;
             }
@@ -211,8 +224,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
 fn expand_states<'c>(
     mut transfer: impl StateGrouping<'c>,
     i: usize,
-    completions: &mut Vec<Completion<'c>>,
-    completion_index: &mut Vec<usize>,
+    completions: &mut Completions<'c>,
     next_states: &mut Vec<State<'c>>,
     cfg: &'c Cfg,
     cursor: usize,
@@ -221,30 +233,19 @@ fn expand_states<'c>(
     for i in i..transfer.read().len() {
         let state = transfer.read()[i];
         let Some(&sym) = state.remaining.get(0) else {
-            let start = completion_index[state.back_ref];
-            let end = completion_index[state.back_ref + 1];
-            let start_of_comps = start + completions[start..end]
-                .partition_point(|c| c.0 < state.sym);
             let new = transfer.write();
-            new.extend(completions[start_of_comps..]
-                .iter()
-                .take_while(|c| c.0 == state.sym)
-                .map(|c| c.1));
+            new.extend(completions.query(state.back_ref, state.sym));
             continue;
         };
         if sym < 256 {
             if src[cursor] == sym as u8 {
                 next_states.push(State(state.back_ref, state.sym, &state.remaining[1..]));
-            } else {
-                // todo!("do nothing? this state is dead?")
             }
         } else {
-            let rules = cfg.rules.partition_point(|r| r.for_nt < sym);
-            
-            completions.push((sym, State(state.back_ref, state.sym, &state.remaining[1..])));
-            transfer.write().extend(cfg
-                .rules[rules..].iter()
-                .take_while(|r| r.for_nt == sym)
+            completions.completions.push((sym, State(state.back_ref, state.sym, &state.remaining[1..])));
+            transfer.write().extend(
+                cfg.rules_for(sym)
+                .iter()
                 .map(|r| State(cursor, sym, &r.parts[..])));
         }
     }
