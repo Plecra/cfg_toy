@@ -3,12 +3,12 @@ use super::{Completion, NtSymbol, State};
 /// It's implemented via a flat buffer containing all the entries in correct order,
 /// and the completion index for locating each value of `usize`. This
 /// provides range queries for `(i, sym)` efficiently.
-pub struct Completions<'a> {
+pub(crate) struct Completions<'a> {
     completions: Vec<Completion<'a>>,
     completion_index: Vec<usize>,
 }
 impl<'a> Completions<'a> {
-    pub fn new(len: usize) -> Self {
+    pub(crate) fn new(len: usize) -> Self {
         let completions = vec![];
         let mut completion_index = Vec::with_capacity(len + 1);
         completion_index.push(0);
@@ -17,10 +17,10 @@ impl<'a> Completions<'a> {
             completion_index,
         }
     }
-    pub fn add_group(&mut self) -> CompletionsTransaction<'a, '_> {
+    pub(crate) fn add_group(&mut self) -> CompletionsTransaction<'a, '_> {
         CompletionsTransaction::new(self)
     }
-    pub fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
+    pub(crate) fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
         let start = self.completion_index[back_ref];
         let end = self.completion_index[back_ref + 1];
         let start_of_comps = start + self.completions[start..end].partition_point(|c| c.0 < sym);
@@ -32,7 +32,7 @@ impl<'a> Completions<'a> {
 }
 // Appending a new group to the Completions buffer needs to be careful to
 // clean up once it's done, which this type is responsible for.
-pub struct CompletionsTransaction<'a, 'b> {
+pub(crate) struct CompletionsTransaction<'a, 'b> {
     completions: &'b mut Completions<'a>,
     start_len: usize,
 }
@@ -44,22 +44,18 @@ impl<'a, 'b> CompletionsTransaction<'a, 'b> {
             start_len,
         }
     }
-    pub fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
+    pub(crate) fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
         self.completions.query(back_ref, sym)
     }
-    pub fn push(&mut self, completion: Completion<'a>) {
+    pub(crate) fn push(&mut self, completion: Completion<'a>) {
         self.completions.completions.push(completion);
     }
-    pub fn batch_id(&self) -> usize {
+    pub(crate) fn batch_id(&self) -> usize {
         self.completions.completion_index.len() - 1
     }
 }
 impl<'a, 'b> Drop for CompletionsTransaction<'a, 'b> {
     fn drop(&mut self) {
-        // let end_len = self.completions.completions.len();
-        // self.completions
-        //     .completion_index
-        //     .push(end_len);
         self.completions.completions[self.start_len..].sort();
         self.completions
             .completion_index
