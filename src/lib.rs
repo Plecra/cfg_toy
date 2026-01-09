@@ -6,7 +6,7 @@ struct Rule {
     parts: Vec<u32>,
 }
 #[derive(Debug)]
-struct Cfg {
+pub struct Cfg {
     rules: Vec<Rule>,
 }
 impl Cfg {
@@ -56,7 +56,7 @@ macro_rules! cfg {
         Cfg { rules: cx.0 }
     }};
 }
-struct Node {
+pub struct Node {
     // transition: u32,
     // start: usize,
     // end: usize,
@@ -136,7 +136,7 @@ struct EarleyStep<'c, 'r> {
     next_states: Vec<State<'c>>,
 }
 // type EarleyStep<'a, T: StateGrouping<State<'a>>> = (T, Vec<State<'a>>, CompletionsTransaction<'a, 'a>);
-fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
+pub fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut states = cfg
         .rules_for(init_sym)
         .map(|r| mk_state(0, init_sym, &r.parts[..]))
@@ -293,6 +293,7 @@ fn retain_with_context<T>(vec: &mut Vec<T>, f: impl FnMut(&mut [T], &mut T) -> b
     let len = slice_retain_with_context(&mut vec[..], f);
     vec.truncate(len);
 }
+#[test]
 fn main() {
     let mut mycfg = cfg! {
         expr and_expr primary alpha ident ws gap and or not;
