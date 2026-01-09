@@ -71,10 +71,14 @@ type Completion<'a> = (NtSymbol, State<'a>);
 struct State<'a> {
     back_ref: usize,
     sym: NtSymbol,
-    remaining: &'a [u32]
+    remaining: &'a [u32],
 }
 fn State(back_ref: usize, sym: NtSymbol, remaining: &[u32]) -> State<'_> {
-    State { back_ref, sym, remaining }
+    State {
+        back_ref,
+        sym,
+        remaining,
+    }
 }
 
 // Here's some unfortunate complexity, this boilerplate is just responsible
@@ -84,7 +88,7 @@ trait StateGrouping<'c> {
     fn write(&mut self) -> &mut Vec<State<'c>>;
 }
 impl<'a, 'b> StateGrouping<'b> for &'a mut Vec<State<'b>> {
-    fn read(&self) -> &Vec<State<'b   >> {
+    fn read(&self) -> &Vec<State<'b>> {
         self
     }
     fn write(&mut self) -> &mut Vec<State<'b>> {
@@ -116,10 +120,8 @@ impl<'a> Completions<'a> {
     fn query(&self, back_ref: usize, sym: NtSymbol) -> impl Iterator<Item = State<'a>> + '_ {
         let start = self.completion_index[back_ref];
         let end = self.completion_index[back_ref + 1];
-        let start_of_comps = start + self.completions[start..end]
-            .partition_point(|c| c.0 < sym);
-        let end_of_comps = start + self.completions[start..end]
-            .partition_point(|c| c.0 <= sym);
+        let start_of_comps = start + self.completions[start..end].partition_point(|c| c.0 < sym);
+        let end_of_comps = start + self.completions[start..end].partition_point(|c| c.0 <= sym);
         self.completions[start_of_comps..end_of_comps]
             .iter()
             .map(|c| c.1)
@@ -144,15 +146,26 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         completion_index: Vec::with_capacity(src.len()),
     };
     completions.completion_index.push(0);
-    
+
     for cursor in 0..src.len() {
         println!("@{cursor} {states:?}");
         let base = completions.completions.len();
         let mut next_states = vec![];
         let mut new_states = vec![];
         let mut states_before_pass = new_states.len();
-        expand_states(FromOldStates { states: &states, new_states: &mut new_states }, 0, &mut completions, &mut next_states, cfg, cursor, src);
-        
+        expand_states(
+            FromOldStates {
+                states: &states,
+                new_states: &mut new_states,
+            },
+            0,
+            &mut completions,
+            &mut next_states,
+            cfg,
+            cursor,
+            src,
+        );
+
         let mut loop_check = {
             let mut iters = 0;
             move || {
@@ -172,7 +185,15 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
                 break;
             }
             states_before_pass = new_states.len();
-            expand_states(&mut new_states, i, &mut completions, &mut next_states, cfg, cursor, src);
+            expand_states(
+                &mut new_states,
+                i,
+                &mut completions,
+                &mut next_states,
+                cfg,
+                cursor,
+                src,
+            );
             new_states[..states_before_pass].sort();
             loop_check();
         }
@@ -181,7 +202,9 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         let new_len = dedup(&mut states, |s| s);
         states.truncate(new_len);
         completions.completions[base..].sort();
-        completions.completion_index.push(completions.completions.len());
+        completions
+            .completion_index
+            .push(completions.completions.len());
     }
     {
         // algo sketch:
@@ -191,7 +214,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         //   for every new state, deduplicate
         //   the pending states are the new states
         //   if pending states are none, break
-        // 
+        //
         states.sort();
         let mut pending_start = 0;
         loop {
@@ -203,7 +226,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
                 }
             }
             states[..pending_end].sort();
-            
+
             let (sorted, appended) = states.split_at_mut(pending_end);
             appended.sort();
             let new_len = dedup_wrt(appended, sorted, |s| s);
@@ -217,8 +240,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     // the match state is (back_ref: 0, sym: 256), so will always be at the
     // start
     println!("{:?}", states[0]);
-    
-    
+
     vec![]
 }
 fn expand_states<'c>(
@@ -242,11 +264,14 @@ fn expand_states<'c>(
                 next_states.push(State(state.back_ref, state.sym, &state.remaining[1..]));
             }
         } else {
-            completions.completions.push((sym, State(state.back_ref, state.sym, &state.remaining[1..])));
+            completions
+                .completions
+                .push((sym, State(state.back_ref, state.sym, &state.remaining[1..])));
             transfer.write().extend(
                 cfg.rules_for(sym)
-                .iter()
-                .map(|r| State(cursor, sym, &r.parts[..])));
+                    .iter()
+                    .map(|r| State(cursor, sym, &r.parts[..])),
+            );
         }
     }
 }
@@ -280,7 +305,7 @@ fn dedup_wrt<T, K: PartialEq + Ord>(slice: &mut [T], wrt: &[T], key: impl Fn(&T)
 fn main() {
     let mut mycfg = cfg! {
         expr and_expr primary alpha ident ws gap and or not;
-        
+
         ws ::= " " .
         ws ::= "\n" .
         gap ::= ws.
@@ -291,11 +316,11 @@ fn main() {
         alpha ::= "c".
         ident ::= alpha ident.
         ident ::= alpha.
-        
+
         and ::= gap "and" gap.
         or ::= gap "or" gap.
         not ::= "not" gap.
-        
+
         expr ::= and_expr or expr.
         expr ::= and_expr.
         and_expr ::= primary and and_expr.
@@ -309,5 +334,4 @@ fn main() {
     println!("{:?}", mycfg);
     mycfg.rules.sort_by_key(|rule| rule.for_nt);
     let ast = parse_earley(&mycfg, "true or false and b  and not true".as_bytes(), 256);
-    
 }
