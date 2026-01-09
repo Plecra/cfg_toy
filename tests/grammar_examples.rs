@@ -41,7 +41,7 @@ fn simple_logic() {
     let mut trace = vec![];
     let _ = cfg_toy::parse_earley(&mycfg, "true then".as_bytes(), 256, &mut trace);
     for (start, end, state) in trace {
-        println!("{} {:?}", state_names[state as usize], start..end);
+        println!("{} {:?}", state_names[state as usize - 256], start..end);
     }
     panic!();
 }

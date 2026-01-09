@@ -102,7 +102,7 @@ pub fn parse_earley(cfg: &crate::grammar::Cfg, src: &[u8], init_sym: u32, mut tr
             let state = states.read()[i];
             if state.remaining.is_empty() {
                 // This state has recognized its nontermininal starting at state.back_ref
-                trace.at(src.len()).completed(state.back_ref, state.sym - 256);
+                trace.at(src.len()).completed(state.back_ref, state.sym);
                 states.write().extend(completions.query(state.back_ref, state.sym));
                 continue;
             }
@@ -125,7 +125,7 @@ impl<'c, T: TraceAt> EarleyStep<'c, '_, T> {
     fn expand_state(&mut self, state: State<'c>, new: &mut Vec<State<'c>>) {
         let Some(&sym) = state.remaining.first() else {
             // This state has recognized its nontermininal starting at state.back_ref
-            self.trace.completed(state.back_ref, state.sym - 256);
+            self.trace.completed(state.back_ref, state.sym);
             new.extend(self.completions_tx.query(state.back_ref, state.sym));
             return;
         };
