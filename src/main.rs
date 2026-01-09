@@ -97,6 +97,14 @@ impl<'a, 'b> StateGrouping<'b> for &'a mut Vec<State<'b>> {
         self
     }
 }
+impl<'a, 'b> StateGrouping<'b> for Vec<State<'b>> {
+    fn read(&self) -> &Vec<State<'b>> {
+        self
+    }
+    fn write(&mut self) -> &mut Vec<State<'b>> {
+        self
+    }
+}
 struct FromOldStates<'a, 'c> {
     states: &'a Vec<State<'c>>,
     new_states: &'a mut Vec<State<'c>>,
@@ -110,6 +118,12 @@ impl<'a, 'b> StateGrouping<'b> for FromOldStates<'a, 'b> {
     }
 }
 
+struct EarleyStep<'c, 'a> {
+    new_states: Vec<State<'c>>,
+    next_states: Vec<State<'c>>,
+    completions_tx: CompletionsTransaction<'c, 'a>,
+}
+
 fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     let mut states = cfg
         .rules_for(init_sym)
@@ -120,25 +134,30 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
     // most of its content is completely unreferenced.
     // Currently using binary search maps due to the need for range queries, it'd be totally sensible
     // to revisit that
-    // let mut completions: Vec<Completion> = vec![];
-    // let mut completion_index: Vec<usize> = Vec::with_capacity(src.len());
-    // completion_index.push(0);
     let mut completions = Completions::new(src.len());
 
     for cursor in 0..src.len() {
-        println!("@{cursor} {states:?}");
-        let mut completions_tx = completions.add_group();
-        let mut next_states = vec![];
-        let mut new_states = vec![];
-        let mut states_before_pass = new_states.len();
+        let mut step = EarleyStep {
+            // As we expand the states, we'll generate more states that need to be processed.
+            // we keep track of all generated states here to deduplicate them
+            new_states: vec![],
+            // The states for the next character get accumulated here, they'll need to be deduplicated
+            // before we actually process the next character
+            next_states: vec![],
+            // If any state transition is a prediction, we remember the completion for it to use later
+            completions_tx: completions.add_group(),
+        };
+        // To optimize deduplicating the new states, we deduplicate in batches, so that nothing
+        // before the current pass needs to be checked again.
+        let mut states_before_pass = step.new_states.len();
         expand_states(
             FromOldStates {
                 states: &states,
-                new_states: &mut new_states,
+                new_states: &mut step.new_states,
             },
+            &mut step.completions_tx,
+            &mut step.next_states,
             0,
-            &mut completions_tx,
-            &mut next_states,
             cfg,
             cursor,
             src,
@@ -154,31 +173,26 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
             }
         };
         loop {
-            let i = states_before_pass;
-            let (sorted, appended) = new_states.split_at_mut(i);
-            appended.sort();
-            let new_len = dedup_wrt(appended, sorted, |s| s);
-            new_states.truncate(i + new_len);
-            if states_before_pass == new_states.len() {
+            isolate_new_elements(&mut step.new_states, states_before_pass);
+            if states_before_pass == step.new_states.len() {
                 break;
             }
-            states_before_pass = new_states.len();
+            let process_states_from = states_before_pass;
+            states_before_pass = step.new_states.len();
             expand_states(
-                &mut new_states,
-                i,
-                &mut completions_tx,
-                &mut next_states,
+                &mut step.new_states,
+                &mut step.completions_tx,
+                &mut step.next_states,
+                process_states_from,
                 cfg,
                 cursor,
                 src,
             );
-            new_states[..states_before_pass].sort();
+            step.new_states[..states_before_pass].sort();
             loop_check();
         }
-        states = next_states;
-        states.sort();
-        let new_len = dedup(&mut states, |s| s);
-        states.truncate(new_len);
+        sorted_set(&mut step.next_states);
+        states = step.next_states;
     }
     {
         // algo sketch:
@@ -217,11 +231,23 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
 
     vec![]
 }
+fn isolate_new_elements(states: &mut Vec<State<'_>>, old_len: usize) {
+    let (old, new) = states.split_at_mut(old_len);
+    new.sort();
+    let mut check = 0;
+    let new_len = slice_retain_with_context(new, |cx, new_val| {
+        while check < old.len() && old[check] < *new_val {
+            check += 1;
+        }
+        cx.last() != Some(new_val) && (check == old.len() || old[check] != *new_val)
+    });
+    states.truncate(old_len + new_len);
+}
 fn expand_states<'c>(
     mut transfer: impl StateGrouping<'c>,
-    i: usize,
     completions: &mut CompletionsTransaction<'c, '_>,
     next_states: &mut Vec<State<'c>>,
+    i: usize,
     cfg: &'c Cfg,
     cursor: usize,
     src: &[u8],
@@ -245,15 +271,10 @@ fn expand_states<'c>(
         }
     }
 }
-fn dedup<T, K: PartialEq>(slice: &mut [T], key: impl Fn(&T) -> &K) -> usize {
-    let mut write_target = 1;
-    for read_head in 1..slice.len() {
-        if key(&slice[write_target - 1]) != key(&slice[read_head]) {
-            slice.swap(read_head, write_target);
-            write_target += 1;
-        }
-    }
-    write_target
+fn vec_dedup<T: PartialEq>(vec: &mut Vec<T>) {
+    retain_with_context(vec, |cx, v| {
+        cx.last() != Some(v)
+    });
 }
 fn dedup_wrt<T, K: PartialEq + Ord>(slice: &mut [T], wrt: &[T], key: impl Fn(&T) -> &K) -> usize {
     let mut write_target = 0;
@@ -271,6 +292,32 @@ fn dedup_wrt<T, K: PartialEq + Ord>(slice: &mut [T], wrt: &[T], key: impl Fn(&T)
         }
     }
     write_target
+}
+fn sorted_set<T: PartialEq + Ord>(vec: &mut Vec<T>) {
+    vec.sort();
+    vec_dedup(vec);
+}
+fn slice_retain_with_context<T, F>(vec: &mut [T], mut f: F) -> usize
+where
+    F: FnMut(&mut [T], &mut T) -> bool,
+{
+    let mut write = 0;
+    for read in 0..vec.len() {
+        let (retained, tail) = vec.split_at_mut(write);
+        let current = &mut tail[read - write];
+        if f(retained, current) {
+            vec.swap(write, read);
+            write += 1;
+        }
+    }
+    write
+}
+fn retain_with_context<T, F>(vec: &mut Vec<T>, f: F)
+where
+    F: FnMut(&mut [T], &mut T) -> bool,
+{
+    let len = slice_retain_with_context(&mut vec[..], f);
+    vec.truncate(len);
 }
 fn main() {
     let mut mycfg = cfg! {
