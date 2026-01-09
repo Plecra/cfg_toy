@@ -153,13 +153,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
         // To optimize deduplicating the new states, we deduplicate in batches, so that nothing
         // before the current pass needs to be checked again.
         let mut states_before_pass = step.new_states.new_states.len();
-        expand_states(
-            &mut step,
-            0,
-            cfg,
-            cursor,
-            src,
-        );
+        expand_states(&mut step, 0, cfg, cursor, src);
         let mut step = EarleyStep {
             new_states: step.new_states.new_states,
             next_states: step.next_states,
@@ -182,13 +176,7 @@ fn parse_earley(cfg: &Cfg, src: &[u8], init_sym: u32) -> Ast {
             }
             let process_states_from = states_before_pass;
             states_before_pass = step.new_states.len();
-            expand_states(
-                &mut step,
-                process_states_from,
-                cfg,
-                cursor,
-                src,
-            );
+            expand_states(&mut step, process_states_from, cfg, cursor, src);
             step.new_states[..states_before_pass].sort();
             loop_check();
         }
@@ -278,9 +266,7 @@ fn expand_states<'c>(
     }
 }
 fn vec_dedup<T: PartialEq>(vec: &mut Vec<T>) {
-    retain_with_context(vec, |cx, v| {
-        cx.last() != Some(v)
-    });
+    retain_with_context(vec, |cx, v| cx.last() != Some(v));
 }
 fn dedup_wrt<T, K: PartialEq + Ord>(slice: &mut [T], wrt: &[T], key: impl Fn(&T) -> &K) -> usize {
     let mut write_target = 0;

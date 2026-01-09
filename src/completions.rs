@@ -1,4 +1,4 @@
-use super::{State, Completion, NtSymbol};
+use super::{Completion, NtSymbol, State};
 /// Semantically, this is a `BTreeMap<(usize, NtSymbol), State<'a>>`
 /// It's implemented via a flat buffer containing all the entries in correct order,
 /// and the completion index for locating each value of `usize`. This
@@ -12,7 +12,10 @@ impl<'a> Completions<'a> {
         let completions = vec![];
         let mut completion_index = Vec::with_capacity(len + 1);
         completion_index.push(0);
-        Self { completions, completion_index }
+        Self {
+            completions,
+            completion_index,
+        }
     }
     pub fn add_group(&mut self) -> CompletionsTransaction<'a, '_> {
         CompletionsTransaction::new(self)
