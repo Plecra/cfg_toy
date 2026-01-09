@@ -16,16 +16,20 @@ pub use recognizer::{Trace, parse_earley};
 // because it'll be resolved by the time we need to build the AST: one of the two will have been invalid
 // The trace should be sorted by (start, sym). This is not inherentely true of the trace we build during parsing.
 // It's sorted by `end` and arbitrary sym order.
-pub fn trace_to_ast<Symbol: CfgSymbol>(
-    cfg: &crate::grammar::Cfg<Symbol>,
+pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
+    cfg: &'c crate::grammar::Cfg<Symbol>,
     src: &[Symbol::Terminal],
     trace: &[(usize, usize, NtSymbol)],
-    init_sym: u32,
-) -> Ast {
+    init_sym: &'c Symbol,
+) -> Ast<'c, Symbol> {
     let mut ast = vec![];
     let mut stack = vec![(src, init_sym)];
     'next_node: while let Some((span, state)) = stack.pop() {
-        let rules = cfg.rules_for(state);
+        let state_nt = match state.as_part() {
+            Either::Err(sym) => sym,
+            Either::Ok(_) => panic!("terminal in trace"),
+        };
+        let rules = cfg.rules_for(state_nt);
         let start = span.as_ptr() as usize - src.as_ptr() as usize;
         for rule in rules {
             let stack_len = stack.len();
@@ -33,7 +37,8 @@ pub fn trace_to_ast<Symbol: CfgSymbol>(
                 if let Some((_, first_child)) = (stack_len < stack.len())
                     .then_some(())
                     .and_then(|_| stack.last())
-                    && *first_child == state
+                    && let Err(new_nt) = first_child.as_part()
+                    && new_nt == state_nt
                 {
                     // left-recursive without progress
                     // FIXME: This can actually happen recursively so need to add handling for that too
@@ -77,12 +82,12 @@ impl CfgSymbol for u32 {
         }
     }
 }
-fn matched_rule<'a, Symbol: CfgSymbol>(
+fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
     mut src: &'a [Symbol::Terminal],
     offset: usize,
     mut trace: &[(usize, usize, NtSymbol)],
-    rule: &[Symbol],
-    children: &mut Vec<(&'a [Symbol::Terminal], NtSymbol)>,
+    rule: &'c [Symbol],
+    children: &mut Vec<(&'a [Symbol::Terminal], &'c Symbol)>,
 ) -> bool {
     for part in rule.iter().rev() {
         match part.as_part() {
@@ -101,7 +106,7 @@ fn matched_rule<'a, Symbol: CfgSymbol>(
                     return false;
                 };
                 println!("pushing {start}..{end} for sym {sym}");
-                children.push((&src[*start - offset..*end - offset], sym));
+                children.push((&src[*start - offset..*end - offset], part));
                 src = &src[..start - offset];
                 let i = trace.partition_point(|(_, match_end, _)| match_end <= start);
                 trace = &trace[..i];
@@ -111,15 +116,16 @@ fn matched_rule<'a, Symbol: CfgSymbol>(
     true
 }
 #[derive(Debug)]
-pub struct Node {
-    transition: u32,
+pub struct Node<'c, Symbol> {
+    // FIXME: Adding this lifetime is silly. switch later
+    transition: &'c Symbol,
     start: usize,
     end: usize,
     children: usize,
     // parent: usize,
     // // next_sibling: usize,
 }
-type Ast = Vec<Node>;
+type Ast<'c, Symbol> = Vec<Node<'c, Symbol>>;
 use recognizer::NtSymbol;
 use recognizer::TraceAt;
 
