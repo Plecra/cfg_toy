@@ -37,6 +37,37 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
         for rule in rules {
             let stack_len = stack.len();
             println!("  trying rule {state:?}{:?} for span {:?}", rule.parts, span);
+            // Here we implement the disambiguation semantics.
+            // Whichever rules we visit first here will immediately be selected and we continue,
+            // so the ordering of the rules from the cfg gives priority.
+            // However in the current implementation this is right-to-left. The difference from left-to-right
+            // is quite subtle and only sometimes observable.
+            // 
+            // if ::= "if" cond "then" stmt
+            // if ::= "if" cond "then" stmt ("else" stmt)?
+            // if a then b else if c then d else e
+            // 
+            // by applying from the right, this disambiguation greedily selects
+            // (if c then d else e), insteadof ... oh lmao ltr does the same thing for 
+            // for a different reason
+            // 
+            // expr ::= expr "<" expr
+            // expr ::= expr ">" expr
+            // expr ::= expr "<" expr ">"
+            // expr ::= expr "(" expr ")"
+            // expr ::= "(" expr ")"
+            // 
+            // f<a>(b)
+            // 
+            // from the right: start trying to form a call, find a generic.
+            // from the left: comparison, then rhs is another comparison with a parenthesized b.
+            // 
+            // great! actually pinned it down. So a goal here would be to also efficiently implement
+            // ltr disambiguation. And the critical challenge is that our data is naturally
+            // asymmetrical: The information about `end`s comes from the Trace, and the paired
+            // starts comes from the completions.
+            // 
+            // whether that'll be an issue is to be seen! I'll have to try the implementation
             if matched_rule(span, start, trace, completions, &rule.parts, &mut stack, state_nt, span.len()) {
                 if let Some((new_span, first_child)) = stack.last().filter(|_| stack_len + 1 == stack.len())
                     && let Err(new_nt) = first_child.as_part()

@@ -229,10 +229,11 @@ r#"[{}]"#
     // panic!("{:?} {:?}", &src[215..220], &src[220..]);
     let completions = cfg_toy::parse_earley(&json_cfg, src, init_sym.symbol, &mut trace);
     trace.sort_by_key(|m| (m.1, m.2));
-    let ast = cfg_toy::trace_to_ast(&json_cfg, src, &trace, &completions, &init_sym);
+    cfg_toy::trace_to_ast(&json_cfg, src, &trace, &completions, &init_sym);
     // for el in &ast {
     //     println!("{el:?}");
     // }
+    // This is simplified below to avoid the noise from the gaps
     // let (ambiguous_grammar, state_names) = cfg_toy::cfg! {
     //     expr lt gt generic functioncall primary ident ws gap;
 
@@ -255,22 +256,50 @@ r#"[{}]"#
     //     primary ::= "(" gap expr gap ")" .
     //     primary ::= ident .
     // };
-    // let ambiguous_grammar = ambiguous_grammar.map(|&sym| {
-    //     cfg_toy::LabelledSymbol {
-    //         symbol: sym,
-    //         // TODO: can make the terminals actually visible if we like
-    //         label: sym.checked_sub(256).map(|idx| state_names[idx as usize]).unwrap_or("terminal"),
-    //     }
-    // });
-    // let mut trace = vec![];
-    // let src = b"a<b> (c)";
-    // let src = cfg_toy::cast_buf(src);
-    // cfg_toy::parse_earley(&ambiguous_grammar, src, 256, &mut trace);
-    // trace.sort_by_key(|m| (m.1, m.2, m.0));
-    // trace.dedup(); // empty rules get duplicated in the trace
-    // for &(start, end, state) in &trace {
-    //     println!("{} {:?}", state_names[state as usize - 256], start..end);
-    // }
+    let (ambiguous_grammar, state_names) = cfg_toy::cfg! {
+        expr lt gt generic functioncall primary ident;
+
+        lt ::= "<".
+        gt ::= ">".
+
+        // Ordered choice works here!
+        //   `functioncall` first ==> `f<a>(b)` = `(f<a>)(b)`
+        //   comparison first ==> `f<a>(b)` = `f < (a>(b))`
+        expr ::= functioncall  .
+        expr ::= functioncall lt expr .
+        expr ::= functioncall gt expr .
+        functioncall ::= functioncall "("  expr ")" .
+        functioncall ::= functioncall "<"  ident ">" .
+        functioncall ::= primary .
+        ident ::= "a" .
+        ident ::= "b" .
+        ident ::= "c" .
+        primary ::= "(" expr ")" .
+        primary ::= ident .
+    };
+    let ambiguous_grammar = ambiguous_grammar.map(|&sym| {
+        cfg_toy::LabelledSymbol {
+            symbol: sym,
+            // TODO: can make the terminals actually visible if we like
+            label: sym.checked_sub(256).map(|idx| state_names[idx as usize]).unwrap_or("terminal"),
+        }
+    });
+    let mut trace = vec![];
+    let src = b"a<b>(c)";
+    let src = cfg_toy::cast_buf(src);
+    let completions = cfg_toy::parse_earley(&ambiguous_grammar, src, 256, &mut trace);
+    trace.sort_by_key(|m| (m.1, m.2, m.0));
+    trace.dedup(); // empty rules get duplicated in the trace
+    for &(start, end, state) in &trace {
+        println!("{} {:?}", state_names[state as usize - 256], start..end);
+    }
+    trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
+    let ast = cfg_toy::trace_to_ast(&ambiguous_grammar, src, &trace, &completions, &cfg_toy::LabelledSymbol {
+            symbol: 256,
+            // TODO: can make the terminals actually visible if we like
+            label: "expr",
+        });
+    println!("{ast:?}");
     // let (dangling_else, state_names) = cfg_toy::cfg! {
     //     expr lt gt generic functioncall primary ident ws gap;
 
@@ -294,6 +323,7 @@ r#"[{}]"#
     //     primary ::= ident .
     // };
 
+
     parse_succeeds(&cfg_toy::cfg! {
         start list ;
         start ::= list .
@@ -311,7 +341,7 @@ r#"[{}]"#
 
 fn parse_succeeds(grammar: &cfg_toy::grammar::Cfg<u32>, src: &[u8], init_sym: u32) {
     let mut trace = vec![];
-    let completions = cfg_toy::parse_earley(&grammar, src, 256, &mut trace);
+    let completions = cfg_toy::parse_earley(grammar, src, init_sym, &mut trace);
     trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
-    let ast = cfg_toy::trace_to_ast(&grammar, src, &trace, &completions, &256);
+    cfg_toy::trace_to_ast(grammar, src, &trace, &completions, &init_sym);
 }
