@@ -232,6 +232,142 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     trace.sort_by_key(|m| (m.1, m.2));
     let ast = cfg_toy::trace_to_ast(&json_cfg, src, &trace, &completions, &init_sym);
     cfg_toy::print_ast(&ast, 0);
+
+    let (bnf_grammar, state_names) = cfg_toy::cfg! {
+        grammar rules rule rule_content nonterminal terminal symbols symbol ws gap alpha characters character escape;
+        ws ::= " " .
+        ws ::= "\n" .
+        gap ::= .
+        gap ::= ws gap.
+
+        grammar ::= gap rules gap .
+        rules ::= rule .
+        rules ::= rule gap rules .
+        rule ::= nonterminal gap "::=" rule_content "." .
+        rule_content ::= gap symbols gap .
+        rule_content ::= gap .
+        symbols ::= symbol .
+        symbols ::= symbol gap symbols .
+        symbol ::= terminal .
+        symbol ::= nonterminal .
+
+
+        nonterminal ::= alpha nonterminal .
+        nonterminal ::= alpha .
+        terminal ::= "\"" characters "\"" .
+        characters ::= .
+        characters ::= character characters .
+        character ::= alpha .
+        character ::= " " .
+        character ::= ":" .
+        character ::= "=" .
+        character ::= "." .
+        character ::= escape .
+        escape ::= "\\" "\"" .
+        escape ::= "\\" "\\" .
+        escape ::= "\\" "n" .
+        
+        alpha ::= "a" .
+        alpha ::= "b" .
+        alpha ::= "c" .
+        alpha ::= "d" .
+        alpha ::= "e" .
+        alpha ::= "f" .
+        alpha ::= "g" .
+        alpha ::= "h" .
+        alpha ::= "i" .
+        alpha ::= "j" .
+        alpha ::= "k" .
+        alpha ::= "l" .
+        alpha ::= "m" .
+        alpha ::= "n" .
+        alpha ::= "o" .
+        alpha ::= "p" .
+        alpha ::= "q" .
+        alpha ::= "r" .
+        alpha ::= "s" .
+        alpha ::= "t" .
+        alpha ::= "u" .
+        alpha ::= "v" .
+        alpha ::= "w" .
+        alpha ::= "x" .
+        alpha ::= "y" .
+        alpha ::= "z" .
+    };
+    let bnf_grammar = bnf_grammar.map(|&sym| {
+        cfg_toy::LabelledSymbol {
+            symbol: sym,
+            label: sym.checked_sub(256).map(|idx| state_names[idx as usize]).unwrap_or("terminal"),
+        }
+    }); 
+    let src = br#"
+        ws ::= " " .
+        ws ::= "\n" .
+        gap ::= .
+        gap ::= ws gap.
+
+        grammar ::= gap rules gap .
+        rules ::= rule .
+        rules ::= rule gap rules .
+        rule ::= nonterminal gap "::=" rule_content "." .
+        rule_content ::= gap symbols gap .
+        rule_content ::= gap .
+        symbols ::= symbol .
+        symbols ::= symbol gap symbols .
+        symbol ::= terminal .
+        symbol ::= nonterminal .
+
+
+        nonterminal ::= alpha nonterminal .
+        nonterminal ::= alpha .
+        terminal ::= "\"" characters "\"" .
+        characters ::= .
+        characters ::= character characters .
+        character ::= alpha .
+        character ::= " " .
+        character ::= ":" .
+        character ::= "=" .
+        character ::= "." .
+        character ::= escape .
+        escape ::= "\\" "\"" .
+        escape ::= "\\" "\\" .
+        escape ::= "\\" "n" .
+        
+        alpha ::= "a" .
+        alpha ::= "b" .
+        alpha ::= "c" .
+        alpha ::= "d" .
+        alpha ::= "e" .
+        alpha ::= "f" .
+        alpha ::= "g" .
+        alpha ::= "h" .
+        alpha ::= "i" .
+        alpha ::= "j" .
+        alpha ::= "k" .
+        alpha ::= "l" .
+        alpha ::= "m" .
+        alpha ::= "n" .
+        alpha ::= "o" .
+        alpha ::= "p" .
+        alpha ::= "q" .
+        alpha ::= "r" .
+        alpha ::= "s" .
+        alpha ::= "t" .
+        alpha ::= "u" .
+        alpha ::= "v" .
+        alpha ::= "w" .
+        alpha ::= "x" .
+        alpha ::= "y" .
+        alpha ::= "z" .
+    "#;
+    let src = cfg_toy::cast_buf(src);
+    let mut trace = vec![];
+    let completions = cfg_toy::parse_earley(&bnf_grammar, src, 256, &mut trace);
+    trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
+    let ast = cfg_toy::trace_to_ast(&bnf_grammar, src, &trace, &completions, &cfg_toy::LabelledSymbol {
+            symbol: 256, label: "grammar",
+    });
+    cfg_toy::print_ast(&ast, 0);
     panic!();
     // for el in &ast {
     //     println!("{el:?}");
