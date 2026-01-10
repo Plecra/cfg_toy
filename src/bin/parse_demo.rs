@@ -385,8 +385,8 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
 
         let mut data = vec![];
         let mut bench_content = vec![];
-        for n in 256..300 {
-            while bench_content.len() < (n * 32) {
+        for n in 32..48 {
+            while bench_content.len() < (n * 16 * 1024) {
                 bench_content.extend_from_slice(src_bytes);
             }
             let mut trace = vec![];
@@ -398,7 +398,8 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
                 256,
                 &mut trace,
             );
-            // println!("now tracing");
+            // println!("{trace:?}");
+            println!("now tracing {:?} {:?}", trace.len(), bench_content.len());
             trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
             let ast = cfg_toy::trace_to_ast(
                 &bnf_grammar_u32,
@@ -411,18 +412,25 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         }
         println!("{data:?}");
     }
-    sample_input_size_growth(br#"
-        grammar ::= gap rules gap .
-        rules ::= rule .
-        rules ::= rule gap rules .
-        rule ::= nonterminal gap "::=" rule_content "." .
-        rule_content ::= gap symbols gap .
-        rule_content ::= gap .
-        symbols ::= symbol .
-        symbols ::= symbol gap symbols .
-        symbol ::= terminal .
-        symbol ::= nonterminal .
-        "#, &bnf_grammar_u32);
+    sample_input_size_growth(br#"aaaaaaaaaaaaa"#,
+        &cfg_toy::cfg! {
+            A;
+            
+            A ::= A "a" .
+            A ::= .
+        }.0);
+    // sample_input_size_growth(br#"
+    //     grammar ::= gap rules gap .
+    //     rules ::= rule .
+    //     rules ::= rule gap rules .
+    //     rule ::= nonterminal gap "::=" rule_content "." .
+    //     rule_content ::= gap symbols gap .
+    //     rule_content ::= gap .
+    //     symbols ::= symbol .
+    //     symbols ::= symbol gap symbols .
+    //     symbol ::= terminal .
+    //     symbol ::= nonterminal .
+    //     "#, &bnf_grammar_u32);
     // println!("now printing");
     // cfg_toy::print_ast(&ast, 0);
 

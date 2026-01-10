@@ -187,7 +187,6 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                     .iter()
                     .rev()
                     .take_while(|&&(_, match_end, _)| {
-                        // println!("{:?} {:?} {}", match_end, src.len() + offset, sym);
                         (src.len() + offset) <= match_end
                     })
                     .find(|&&(start, end, s)| {
@@ -209,10 +208,11 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                     return false;
                 };
                 // println!("! {tests:?}");
+                let i = trace.partition_point(|(_, match_end, _)| match_end <= end);
                 // println!("pushing {start}..{end} for sym {sym}");
                 children.push(CallFrame::ProcessNode(
                     &src[*start - offset..*end - offset],
-                    trace,
+                    &trace[..i],
                     part,
                 ));
                 src = &src[..start - offset];
