@@ -83,7 +83,7 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
                     // push nodes to ast
                     let end = start + span.len();
                     ast.push(Node {
-                        transition: state,
+                        transition: &rule.parts,
                         start,
                         end,
                         children: stack.len() - stack_len,
@@ -176,10 +176,10 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
 #[derive(Debug)]
 pub struct Node<'c, Symbol> {
     // FIXME: Adding this lifetime is silly. switch later
-    transition: &'c Symbol,
-    start: usize,
-    end: usize,
-    children: usize,
+    pub transition: &'c [Symbol],
+    pub start: usize,
+    pub end: usize,
+    pub children: usize,
     // parent: usize,
     // // next_sibling: usize,
 }
@@ -234,7 +234,11 @@ impl CfgSymbol for LabelledSymbol {
 }
 impl std::fmt::Debug for LabelledSymbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.label.fmt(f)
+        if self.symbol < 256 {
+            char::from(self.symbol as u8).fmt(f)
+        } else {
+            std::fmt::Display::fmt(&self.label, f)
+        }
     }
 }
 struct RecordTrace<'a> {
