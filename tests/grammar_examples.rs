@@ -123,3 +123,15 @@ fn aliased_rules() {
     cfg_toy::print_ast(&ast, 0);
     panic!();
 }
+#[test]
+fn right_recursion() {
+    let cfg = cfg_toy::cfg! {
+        A;
+        
+        A ::= "a" A .
+        A ::= .
+    }.0;
+    let src = br#"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"#;
+    cfg_toy::parse_earley(&cfg, src, 256, ());
+    panic!();
+}
