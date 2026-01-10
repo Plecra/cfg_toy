@@ -208,12 +208,12 @@ pub struct Node<'c, Symbol> {
     // parent: usize,
     // // next_sibling: usize,
 }
-pub fn print_ast<'a, 'c, S: CfgSymbol>(ast: &'a [Node<'c, S>], indent: usize) {
+pub fn print_ast<'a, 'c, S: CfgSymbol + PartialEq>(ast: &'a [Node<'c, S>], indent: usize) {
     print!("{:?}", DebugIt(ast, indent));
     struct DebugIt<'a, S: CfgSymbol>(&'a [Node<'a, S>], usize);
     impl<S> std::fmt::Debug for DebugIt<'_, S>
     where
-    S: CfgSymbol,
+    S: CfgSymbol + PartialEq,
     {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let ast = self.0;
@@ -222,11 +222,12 @@ pub fn print_ast<'a, 'c, S: CfgSymbol>(ast: &'a [Node<'c, S>], indent: usize) {
             for _ in 0..indent  {
                 write!(f, " ")?;
             }
-            write!(f, "- ")?;
+            write!(f, "- {}..{} ", node.start, node.end)?;
             let mut rule_desc = f.debug_list();
             // Add inlining rules.
             // let mut inlined_children = vec![];
             let mut result_edges = vec![];
+            let mut list_terminators = vec![];
             let mut transition = node.transition;
             let mut rem = &ast[1..];
             while !transition.is_empty() {
@@ -237,24 +238,66 @@ pub fn print_ast<'a, 'c, S: CfgSymbol>(ast: &'a [Node<'c, S>], indent: usize) {
                     }
                     Either::Err(_sym) => {
                         let (child, rest) = rem.split_at(1 + rem[0].transitive_children);
-                        if child.len() == 1 {
-                            if child[0].transition.is_empty() {
-                                rule_desc.entry(&format_args!("^ε"));
-                            } else {
-                                let first = &child[0].transition[0];
-                                rule_desc.entry(&format_args!("^{:?}", first));
-                                for sym in &child[0].transition[1..] {
-                                    rule_desc.entry(sym);
-                                }
-                            }
-                        } else if transition.len() == 1
+                        if (transition.len() == 1)
                             && result_edges.is_empty()
+                            && !child[0].transition.is_empty()
                             {
                             assert_eq!(rest.len(), 0);
                             transition = child[0].transition;
                             rem = &child[1..];
                             continue;
-                        } else {
+                        } else 
+                        if child[0].transition.last() == Some(part) && rest.is_empty() {
+                            if !transition.is_empty() {
+                                list_terminators.push(&transition[1..]);
+                            }
+                            transition = child[0].transition;
+                            rem = &child[1..];
+                            continue;
+                        } else if 
+                            child[..child.len() - 1].iter().all(|node| node.children == 1)
+                        // child.len() == 1 || child.len() == 0 
+                        {
+                            let mut js = vec![0; child.len() - 1];
+                            for (i, jo) in js.iter_mut().enumerate() {
+                                let leaf = &child[i];
+                                let first = match leaf.transition[0].as_part() {
+                                    Either::Ok(t) => t,
+                                    Either::Err(_) => {
+                                        *jo = 1;
+                                        continue;
+                                    },
+                                };
+                                rule_desc.entry(&format_args!("^{:?}", first.borrow()));
+                                for i in 1..leaf.transition.len() {
+                                    let term = match leaf.transition[i].as_part() {
+                                        Either::Ok(t) => t,
+                                        Either::Err(_) => {
+                                            *jo = i + 1;
+                                            continue;
+                                        },
+                                    };
+                                    rule_desc.entry(&term.borrow());
+                                }
+                            }
+                            let leaf = &child[child.len() - 1];
+                            if leaf.transition.is_empty() {
+                                rule_desc.entry(&format_args!("^ε"));
+                            } else {
+                                let first = &leaf.transition[0];
+                                rule_desc.entry(&format_args!("^{:?}", first));
+                                for sym in &leaf.transition[1..] {
+                                    rule_desc.entry(sym);
+                                }
+                            }
+                            for i in (0..js.len()).rev() {
+                                let skip = js[i];
+                                let leaf = &child[i];
+                                for sym in &leaf.transition[skip..] {
+                                    rule_desc.entry(sym);
+                                }
+                            }
+                        } else  {
                             rule_desc.entry(part);
                             result_edges.push(child);
                         }
@@ -263,8 +306,13 @@ pub fn print_ast<'a, 'c, S: CfgSymbol>(ast: &'a [Node<'c, S>], indent: usize) {
                 }
                 transition = &transition[1..];
             }
+            while let Some(terminator) = list_terminators.pop() {
+                for sym in terminator {
+                    rule_desc.entry(sym);
+                }
+            }
             rule_desc.finish()?;
-            writeln!(f, " {}..{}", node.start, node.end)?;
+            writeln!(f)?;
             for emit in result_edges {
                 print_ast(emit, indent + 1);
             }
