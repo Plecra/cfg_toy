@@ -69,7 +69,7 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
         .rules_for(init_sym)
         .map(|r| mk_state(0, init_sym, &r.parts[..]))
         .collect::<Vec<_>>();
-    println!("initial states: {:?}", states);
+    // println!("initial states: {:?}", states);
     // This is kept between iterations for double buffering to
     // save on allocating it.
     let mut next_states = vec![];

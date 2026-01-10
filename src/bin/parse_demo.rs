@@ -381,28 +381,50 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         },
     );
     cfg_toy::print_ast(&ast, 0);
-    let mut bench_content = vec![];
-    while bench_content.len() < 10_000 {
-        bench_content.extend_from_slice(src_bytes);
+    fn sample_input_size_growth(src_bytes: &[u8], bnf_grammar_u32: &cfg_toy::grammar::Cfg<u32>) {
+
+        let mut data = vec![];
+        let mut bench_content = vec![];
+        for n in 256..300 {
+            while bench_content.len() < (n * 32) {
+                bench_content.extend_from_slice(src_bytes);
+            }
+            let mut trace = vec![];
+            println!("testing {n}");
+            let start = std::time::Instant::now();
+            let completions = cfg_toy::parse_earley(
+                &bnf_grammar_u32,
+                &bench_content,
+                256,
+                &mut trace,
+            );
+            // println!("now tracing");
+            trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
+            let ast = cfg_toy::trace_to_ast(
+                &bnf_grammar_u32,
+                &bench_content,
+                &trace,
+                &completions,
+                &256,
+            );
+            data.push((start.elapsed().as_secs_f64(), n));
+        }
+        println!("{data:?}");
     }
-    let mut trace = vec![];
-    let completions = cfg_toy::parse_earley(
-        &bnf_grammar_u32,
-        &bench_content,
-        256,
-        &mut trace,
-    );
-    println!("now tracing");
-    trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
-    let ast = cfg_toy::trace_to_ast(
-        &bnf_grammar_u32,
-        &bench_content,
-        &trace,
-        &completions,
-        &256,
-    );
-    println!("now printing");
-    cfg_toy::print_ast(&ast, 0);
+    sample_input_size_growth(br#"
+        grammar ::= gap rules gap .
+        rules ::= rule .
+        rules ::= rule gap rules .
+        rule ::= nonterminal gap "::=" rule_content "." .
+        rule_content ::= gap symbols gap .
+        rule_content ::= gap .
+        symbols ::= symbol .
+        symbols ::= symbol gap symbols .
+        symbol ::= terminal .
+        symbol ::= nonterminal .
+        "#, &bnf_grammar_u32);
+    // println!("now printing");
+    // cfg_toy::print_ast(&ast, 0);
 
     panic!();
     // for el in &ast {

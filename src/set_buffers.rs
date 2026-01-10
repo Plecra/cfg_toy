@@ -30,7 +30,7 @@ pub fn grow_ordered_set<T: Ord>(states: &mut Vec<T>, mut rel: impl FnMut(Interna
         let mut iters = 0;
         move || {
             iters += 1;
-            if 1200 <= iters {
+            if 12000 <= iters {
                 panic!("recursion limit?");
             }
         }
