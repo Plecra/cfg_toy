@@ -76,3 +76,58 @@ fn print_ast<'a, 'c, S: cfg_toy::CfgSymbol>(ast: &'a [cfg_toy::Node<'c, S>], ind
     }
     rem
 }
+
+/// S ::= A
+// ## so there's this possible concern where we take the wrong
+// ## path because of aliasing between rules.
+// ## we know that we're looking at somewhere that *some* C is
+// ## the valid end of a prefix matching the rule we're after,
+// ## but the C we find could be from an unrelated branch
+// A ::= P C .
+// A ::= P "a" C "b".
+// 
+// C ::= "a" "a" .
+// C ::= "a" .
+// 
+// P ::= "a". // (just adding this prefix to obscure the start of the rule)
+// 
+//   C
+//   |
+//  --
+// aaab
+// 
+// so here while attempting A#2, choosing this incorrect C would be
+// a trap and incorrectly fail the rule.
+// 
+// repetition within a rule never risks this, because we can only be
+// looking at the last NT child of the prefix.
+// 
+// so if necessary a fix *is* to remember the branch we're parsing.
+// C(aaa) would know that it's returning to A#1 and therefore we dont
+// use it.
+// 
+// ooh the completion stores truly exactly the info we need here: C#1
+// returns to a completion of `[]` and C#2` returns to a completion of
+// `["b"]`. that's exactly the question we're asking "is this a prefix
+// to the suffix I have parsed"
+#[test]
+fn aliased_rules() {
+    let grammar = cfg_toy::cfg! {
+        A C;
+        A ::= C .
+        A ::= "a" C "b".
+
+        C ::= "a" "a" .
+        C ::= "a" .
+    }.0;
+    let src = "aab".as_bytes();
+    let mut trace = vec![];
+    let completions = cfg_toy::parse_earley(&grammar, src, 256, &mut trace);
+    // for &(start, end, state) in &trace {
+    //     println!("{} {:?}", state_names[state as usize - 256], start..end);
+    // }
+    trace.sort_by_key(|m| (m.1, m.2, -(m.0 as isize)));
+    let ast = cfg_toy::trace_to_ast(&grammar, src, &trace, &completions, &256);
+    print_ast(&ast, 0);
+    panic!();
+}
