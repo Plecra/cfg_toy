@@ -16,7 +16,7 @@ pub use recognizer::{Trace, parse_earley};
 // because it'll be resolved by the time we need to build the AST: one of the two will have been invalid
 // The trace should be sorted by (start, sym). This is not inherentely true of the trace we build during parsing.
 // It's sorted by `end` and arbitrary sym order.
-pub fn trace_to_ast<'c, Symbol: CfgSymbol>(
+pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
     cfg: &'c crate::grammar::Cfg<Symbol>,
     src: &[Symbol::Terminal],
     trace: &[(usize, usize, NtSymbol)],
@@ -120,7 +120,7 @@ impl CfgSymbol for u32 {
     }
 }
 #[allow(clippy::too_many_arguments)]
-fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
+fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
     mut src: &'a [Symbol::Terminal],
     offset: usize,
     mut trace: &[(usize, usize, NtSymbol)],
@@ -139,7 +139,8 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
     // a nonterminal.
     //
     // This can happen even in unambiguous parses.
-    for part in rule.iter().rev() {
+    let mut iter = rule.iter();
+    while let Some(part) = iter.next_back() {
         match part.as_part() {
             Either::Ok(part) => {
                 if src.last() != Some(part.borrow()) {
@@ -158,7 +159,10 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol>(
                         && (s != parent_sym || (end - start) < parent_len)
                         && completions
                             .query(dbg!(start), sym)
-                            .any(|st| st.back_ref ==  offset && st.sym == parent_sym)
+                            .any(|st| st.back_ref ==  offset && st.sym == parent_sym
+                                // The completion must cover the nodes we've parsed so far
+                                && dbg!(st.remaining) == dbg!(&rule[iter.as_slice().len() + 1..])
+                            )
                     )
                 else {
                     return false;

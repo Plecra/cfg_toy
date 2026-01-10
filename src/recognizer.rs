@@ -32,7 +32,7 @@ pub(crate) type Completion<'a, Symbol> = (NtSymbol, State<'a, Symbol>);
 pub(crate) struct State<'a, Symbol> {
     pub(crate) back_ref: usize,
     pub(crate) sym: NtSymbol,
-    remaining: &'a [Symbol],
+    pub(crate) remaining: &'a [Symbol],
 }
 impl<'a, Symbol> Clone for State<'a, Symbol> {
     fn clone(&self) -> Self {
