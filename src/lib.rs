@@ -208,18 +208,69 @@ pub struct Node<'c, Symbol> {
     // parent: usize,
     // // next_sibling: usize,
 }
-pub fn print_ast<'a, 'c, S: CfgSymbol>(ast: &'a [Node<'c, S>], indent: usize) -> &'a [Node<'c, S>] {
-    let node = &ast[0];
-    for _ in 0..indent  {
-        print!(" ");
+pub fn print_ast<'a, 'c, S: CfgSymbol>(ast: &'a [Node<'c, S>], indent: usize) {
+    print!("{:?}", DebugIt(ast, indent));
+    struct DebugIt<'a, S: CfgSymbol>(&'a [Node<'a, S>], usize);
+    impl<S> std::fmt::Debug for DebugIt<'_, S>
+    where
+    S: CfgSymbol,
+    {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let ast = self.0;
+            let indent = self.1;
+            let node = &ast[0];
+            for _ in 0..indent  {
+                write!(f, " ")?;
+            }
+            write!(f, "- ")?;
+            let mut rule_desc = f.debug_list();
+            // Add inlining rules.
+            // let mut inlined_children = vec![];
+            let mut result_edges = vec![];
+            let mut transition = node.transition;
+            let mut rem = &ast[1..];
+            while !transition.is_empty() {
+                let part = &transition[0];
+                match part.as_part() {
+                    Either::Ok(part) => {
+                        rule_desc.entry(part.borrow());
+                    }
+                    Either::Err(_sym) => {
+                        let (child, rest) = rem.split_at(1 + rem[0].transitive_children);
+                        if child.len() == 1 {
+                            if child[0].transition.is_empty() {
+                                rule_desc.entry(&format_args!("^ε"));
+                            } else {
+                                let first = &child[0].transition[0];
+                                rule_desc.entry(&format_args!("^{:?}", first));
+                                for sym in &child[0].transition[1..] {
+                                    rule_desc.entry(sym);
+                                }
+                            }
+                        } else if transition.len() == 1
+                            && result_edges.is_empty()
+                            {
+                            assert_eq!(rest.len(), 0);
+                            transition = child[0].transition;
+                            rem = &child[1..];
+                            continue;
+                        } else {
+                            rule_desc.entry(part);
+                            result_edges.push(child);
+                        }
+                        rem = rest;
+                    }
+                }
+                transition = &transition[1..];
+            }
+            rule_desc.finish()?;
+            writeln!(f, " {}..{}", node.start, node.end)?;
+            for emit in result_edges {
+                print_ast(emit, indent + 1);
+            }
+            Ok(())
+        }
     }
-    // Add inlining rules.
-    println!("- {:?} {}..{}", node.transition, node.start, node.end);
-    let mut rem = &ast[1..];
-    for _ in 0..node.children {
-        rem = print_ast(rem, indent + 1);
-    }
-    rem
 }
 type Ast<'c, Symbol> = Vec<Node<'c, Symbol>>;
 use recognizer::NtSymbol;
