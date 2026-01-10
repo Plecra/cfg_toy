@@ -7,6 +7,10 @@ use std::borrow::Borrow;
 
 pub use recognizer::{Trace, parse_earley};
 
+enum CallFrame<'a, 'c, Symbol: CfgSymbol> {
+    ProcessNode(&'a [Symbol::Terminal], &'c Symbol),
+    ReturnToParent(usize),
+}
 // Build an AST for a trace of an unambiguous parse.
 // That is, a parse where all ambiguities have been resolved, in examples like
 // S ::= "then"
@@ -23,19 +27,35 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
     completions: &crate::completions::Completions<'c, Symbol>,
     init_sym: &'c Symbol,
 ) -> Ast<'c, Symbol> {
-    let mut ast = vec![];
-    let mut stack = vec![(src, init_sym)];
+    let mut ast: Ast<'c, Symbol> = vec![];
+
+    // This virtual stack is used to speculatively visit children,
+    // and allow it to be aborted with `stack.truncate()` if a rule fails to match.
+    // It makes this function look way more complicated! It's not really necessary
+    // for the logic, just premature "optimization" :D
+    let mut stack = vec![CallFrame::ProcessNode(src, init_sym)];
     println!("{trace:?}");
-    'next_node: while let Some((span, state)) = stack.pop() {
-        println!("{state:?} under {:?}", stack.iter().map(|(_, s)| s).collect::<Vec<_>>());
+    'next_node: while let Some(res) = stack.pop() {
+        let (span, state) = match res {
+            CallFrame::ProcessNode(span, state) => (span, state),
+            CallFrame::ReturnToParent(idx) => {
+                let current = ast.len();
+                let x: &mut Node<'c, Symbol> = &mut ast[idx];
+                x.transitive_children = current - idx - 1;
+                continue;
+            },
+        };
+        // println!("{state:?} under {:?}", stack.iter().map(|(_, s)| s).collect::<Vec<_>>());
         let state_nt = match state.as_part() {
             Either::Err(sym) => sym,
             Either::Ok(_) => panic!("terminal in trace"),
         };
         let rules = cfg.rules_for(state_nt);
         let start = span.as_ptr() as usize - src.as_ptr() as usize;
+        stack.push(CallFrame::ReturnToParent(ast.len()));
+        let stack_len = stack.len();
         for rule in rules {
-            let stack_len = stack.len();
+            stack.truncate(stack_len);
             println!("  trying rule {state:?}{:?} for span {:?}", rule.parts, span);
             // Here we implement the disambiguation semantics.
             // Whichever rules we visit first here will immediately be selected and we continue,
@@ -69,7 +89,7 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
             // 
             // whether that'll be an issue is to be seen! I'll have to try the implementation
             if matched_rule(span, start, trace, completions, &rule.parts, &mut stack, state_nt, span.len()) {
-                if let Some((new_span, first_child)) = stack.last().filter(|_| stack_len + 1 == stack.len())
+                if let Some(CallFrame::ProcessNode(new_span, first_child)) = stack.last().filter(|_| stack_len + 1 == stack.len())
                     && let Err(new_nt) = first_child.as_part()
                     && new_nt == state_nt
                     && new_span.len() == span.len()
@@ -87,11 +107,11 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
                         start,
                         end,
                         children: stack.len() - stack_len,
+                        transitive_children: 0,
                     });
                     continue 'next_node;
                 }
             }
-            stack.truncate(stack_len);
         }
         panic!("no matching rule found");
     }
@@ -126,7 +146,7 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
     mut trace: &[(usize, usize, NtSymbol)],
     completions: &crate::completions::Completions<'c, Symbol>,
     rule: &'c [Symbol],
-    children: &mut Vec<(&'a [Symbol::Terminal], &'c Symbol)>,
+    children: &mut Vec<CallFrame<'a, 'c, Symbol>>,
     parent_sym: u32,
     parent_len: usize,
 ) -> bool {
@@ -168,7 +188,7 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                     return false;
                 };
                 // println!("pushing {start}..{end} for sym {sym}");
-                children.push((&src[*start - offset..*end - offset], part));
+                children.push(CallFrame::ProcessNode(&src[*start - offset..*end - offset], part));
                 src = &src[..start - offset];
                 let i = trace.partition_point(|(_, match_end, _)| match_end <= start);
                 trace = &trace[..i];
@@ -184,6 +204,7 @@ pub struct Node<'c, Symbol> {
     pub start: usize,
     pub end: usize,
     pub children: usize,
+    pub transitive_children: usize,
     // parent: usize,
     // // next_sibling: usize,
 }
