@@ -34,7 +34,7 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
     // It makes this function look way more complicated! It's not really necessary
     // for the logic, just premature "optimization" :D
     let mut stack = vec![CallFrame::ProcessNode(src, init_sym)];
-    println!("{trace:?}");
+    // println!("{trace:?}");
     'next_node: while let Some(res) = stack.pop() {
         let (span, state) = match res {
             CallFrame::ProcessNode(span, state) => (span, state),
@@ -56,10 +56,10 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
         let stack_len = stack.len();
         for rule in rules {
             stack.truncate(stack_len);
-            println!(
-                "  trying rule {state:?}{:?} for span {:?}",
-                rule.parts, span
-            );
+            // println!(
+            //     "  trying rule {state:?}{:?} for span {:?}",
+            //     rule.parts, span
+            // );
             // Here we implement the disambiguation semantics.
             // Whichever rules we visit first here will immediately be selected and we continue,
             // so the ordering of the rules from the cfg gives priority.
@@ -188,10 +188,10 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                         // if a rule is left/right recursive but hidden through another rule
                         && (s != parent_sym || (end - start) < parent_len)
                         && completions
-                            .query(dbg!(start), sym)
+                            .query(start, sym)
                             .any(|st| st.back_ref ==  offset && st.sym == parent_sym
                                 // The completion must cover the nodes we've parsed so far
-                                && dbg!(st.remaining) == dbg!(&rule[iter.as_slice().len() + 1..])
+                                && st.remaining == &rule[iter.as_slice().len() + 1..]
                             )
                 }) else {
                     return false;

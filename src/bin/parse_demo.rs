@@ -235,8 +235,8 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     let ast = cfg_toy::trace_to_ast(&json_cfg, src, &trace, &completions, &init_sym);
     cfg_toy::print_ast(&ast, 0);
 
-    let (bnf_grammar, state_names) = cfg_toy::cfg! {
-        grammar rules rule rule_content nonterminal terminal symbols symbol ws gap alpha characters character escape;
+    let (bnf_grammar_u32, state_names) = cfg_toy::cfg! {
+        grammar rules rule rule_content nonterminal terminal symbols symbol ws gap alpha label characters character escape;
         ws ::= " " .
         ws ::= "\n" .
         gap ::= .
@@ -254,8 +254,11 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         symbol ::= nonterminal .
 
 
-        nonterminal ::= alpha nonterminal .
-        nonterminal ::= alpha .
+        nonterminal ::= label nonterminal .
+        nonterminal ::= label .
+        label ::= "_".
+        label ::= alpha.
+
         terminal ::= "\"" characters "\"" .
         characters ::= .
         characters ::= character characters .
@@ -296,14 +299,14 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         alpha ::= "y" .
         alpha ::= "z" .
     };
-    let bnf_grammar = bnf_grammar.map(|&sym| cfg_toy::LabelledSymbol {
+    let bnf_grammar = bnf_grammar_u32.map(|&sym| cfg_toy::LabelledSymbol {
         symbol: sym,
         label: sym
             .checked_sub(256)
             .map(|idx| state_names[idx as usize])
             .unwrap_or("terminal"),
     });
-    let src = br#"
+    let src_bytes = br#"
         ws ::= " " .
         ws ::= "\n" .
         gap ::= .
@@ -363,7 +366,7 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         alpha ::= "y" .
         alpha ::= "z" .
     "#;
-    let src = cfg_toy::cast_buf(src);
+    let src = cfg_toy::cast_buf(src_bytes);
     let mut trace = vec![];
     let completions = cfg_toy::parse_earley(&bnf_grammar, src, 256, &mut trace);
     trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
@@ -378,6 +381,29 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         },
     );
     cfg_toy::print_ast(&ast, 0);
+    let mut bench_content = vec![];
+    while bench_content.len() < 10_000 {
+        bench_content.extend_from_slice(src_bytes);
+    }
+    let mut trace = vec![];
+    let completions = cfg_toy::parse_earley(
+        &bnf_grammar_u32,
+        &bench_content,
+        256,
+        &mut trace,
+    );
+    println!("now tracing");
+    trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
+    let ast = cfg_toy::trace_to_ast(
+        &bnf_grammar_u32,
+        &bench_content,
+        &trace,
+        &completions,
+        &256,
+    );
+    println!("now printing");
+    cfg_toy::print_ast(&ast, 0);
+
     panic!();
     // for el in &ast {
     //     println!("{el:?}");
