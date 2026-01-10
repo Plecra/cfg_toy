@@ -66,7 +66,10 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
     mut trace: impl Trace,
 ) -> Completions<'c, Symbol> {
     let mut states = cfg
-        .rules_for(init_sym)
+        .query_nt(init_sym)
+        .unwrap()
+        .filter(|i| !cfg.rule_nullable[*i])
+        .map(|i| &cfg.rules[i])
         .map(|r| mk_state(0, init_sym, &r.parts[..]))
         .collect::<Vec<_>>();
     // println!("initial states: {:?}", states);
