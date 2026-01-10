@@ -8,7 +8,7 @@ use std::borrow::Borrow;
 pub use recognizer::{Trace, parse_earley};
 
 enum CallFrame<'a, 'c, Symbol: CfgSymbol> {
-    ProcessNode(&'a [Symbol::Terminal], &'c Symbol),
+    ProcessNode(&'a [Symbol::Terminal], &'a [(usize, usize, NtSymbol)], &'c Symbol),
     ReturnToParent(usize),
 }
 // Build an AST for a trace of an unambiguous parse.
@@ -23,7 +23,7 @@ enum CallFrame<'a, 'c, Symbol: CfgSymbol> {
 pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
     cfg: &'c crate::grammar::Cfg<Symbol>,
     src: &[Symbol::Terminal],
-    trace: &[(usize, usize, NtSymbol)],
+    init_trace: &[(usize, usize, NtSymbol)],
     completions: &crate::completions::Completions<'c, Symbol>,
     init_sym: &'c Symbol,
 ) -> Ast<'c, Symbol> {
@@ -33,11 +33,11 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
     // and allow it to be aborted with `stack.truncate()` if a rule fails to match.
     // It makes this function look way more complicated! It's not really necessary
     // for the logic, just premature "optimization" :D
-    let mut stack = vec![CallFrame::ProcessNode(src, init_sym)];
+    let mut stack = vec![CallFrame::ProcessNode(src, init_trace, init_sym)];
     // println!("{trace:?}");
     'next_node: while let Some(res) = stack.pop() {
-        let (span, state) = match res {
-            CallFrame::ProcessNode(span, state) => (span, state),
+        let (span, trace_slice, state) = match res {
+            CallFrame::ProcessNode(span, trace_slice, state) => (span, trace_slice, state),
             CallFrame::ReturnToParent(idx) => {
                 let current = ast.len();
                 let x: &mut Node<'c, Symbol> = &mut ast[idx];
@@ -94,14 +94,14 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
             if matched_rule(
                 span,
                 start,
-                trace,
+                trace_slice,
                 completions,
                 &rule.parts,
                 &mut stack,
                 state_nt,
                 span.len(),
             ) {
-                if let Some(CallFrame::ProcessNode(new_span, first_child)) =
+                if let Some(CallFrame::ProcessNode(new_span, _, first_child)) =
                     stack.last().filter(|_| stack_len + 1 == stack.len())
                     && let Err(new_nt) = first_child.as_part()
                     && new_nt == state_nt
@@ -155,7 +155,7 @@ impl CfgSymbol for u32 {
 fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
     mut src: &'a [Symbol::Terminal],
     offset: usize,
-    mut trace: &[(usize, usize, NtSymbol)],
+    mut trace: &'a [(usize, usize, NtSymbol)],
     completions: &crate::completions::Completions<'c, Symbol>,
     rule: &'c [Symbol],
     children: &mut Vec<CallFrame<'a, 'c, Symbol>>,
@@ -181,8 +181,20 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                 src = &src[..src.len() - 1];
             }
             Either::Err(sym) => {
+                let mut tests = 0;
                 // find the last occurrence of this symbol in the trace that ends at src_index + 1
-                let Some((start, end, _)) = trace.iter().rfind(|&&(start, end, s)| {
+                let Some((start, end, _)) = trace
+                    .iter()
+                    .rev()
+                    .take_while(|&&(_, match_end, _)| {
+                        // println!("{:?} {:?} {}", match_end, src.len() + offset, sym);
+                        (src.len() + offset) <= match_end
+                    })
+                    .find(|&&(start, end, s)| {
+                    ({
+                        tests += 1;
+                        true
+                    }) &&
                     s == sym && end == (src.len() + offset)
                         // FIXME: This needs to work recursively again,
                         // if a rule is left/right recursive but hidden through another rule
@@ -196,9 +208,11 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                 }) else {
                     return false;
                 };
+                // println!("! {tests:?}");
                 // println!("pushing {start}..{end} for sym {sym}");
                 children.push(CallFrame::ProcessNode(
                     &src[*start - offset..*end - offset],
+                    trace,
                     part,
                 ));
                 src = &src[..start - offset];
