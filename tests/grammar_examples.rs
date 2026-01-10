@@ -61,20 +61,8 @@ fn simple_logic() {
     trace.sort_by_key(|m| (m.1, m.2));
     let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &init_sym);
     // println!("{ast:?}");
-    print_ast(&ast, 0);
+    cfg_toy::print_ast(&ast, 0);
     panic!();
-}
-fn print_ast<'a, 'c, S: cfg_toy::CfgSymbol>(ast: &'a [cfg_toy::Node<'c, S>], indent: usize) -> &'a [cfg_toy::Node<'c, S>] {
-    let node = &ast[0];
-    for _ in 0..indent  {
-        print!(" ");
-    }
-    println!("- {:?} {}..{}", node.transition, node.start, node.end);
-    let mut rem = &ast[1..];
-    for _ in 0..node.children {
-        rem = print_ast(rem, indent + 1);
-    }
-    rem
 }
 
 /// S ::= A
@@ -128,6 +116,6 @@ fn aliased_rules() {
     // }
     trace.sort_by_key(|m| (m.1, m.2, -(m.0 as isize)));
     let ast = cfg_toy::trace_to_ast(&grammar, src, &trace, &completions, &256);
-    print_ast(&ast, 0);
+    cfg_toy::print_ast(&ast, 0);
     panic!();
 }

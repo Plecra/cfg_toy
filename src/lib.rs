@@ -187,6 +187,19 @@ pub struct Node<'c, Symbol> {
     // parent: usize,
     // // next_sibling: usize,
 }
+pub fn print_ast<'a, 'c, S: CfgSymbol>(ast: &'a [Node<'c, S>], indent: usize) -> &'a [Node<'c, S>] {
+    let node = &ast[0];
+    for _ in 0..indent  {
+        print!(" ");
+    }
+    // Add inlining rules.
+    println!("- {:?} {}..{}", node.transition, node.start, node.end);
+    let mut rem = &ast[1..];
+    for _ in 0..node.children {
+        rem = print_ast(rem, indent + 1);
+    }
+    rem
+}
 type Ast<'c, Symbol> = Vec<Node<'c, Symbol>>;
 use recognizer::NtSymbol;
 use recognizer::TraceAt;
