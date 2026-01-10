@@ -337,6 +337,52 @@ r#"[{}]"#
         flexible ::= "b" "b" .
         flexible ::= "b"  .
     }.0,  b"abb", 256);
+    //     ```
+    // S ::= A B .
+    // A ::= "a" "a" . // prefer
+    // A ::= "a" .
+    // B ::= "a" "b" . // prefer
+    // B ::= "b" .
+    // ```
+    // here is a very simple ambiguour CFG. Taken as a PEG there is only one correct parse.
+    // We want an algorithm that is capable of finding the peg parse in general.
+
+    // This highlights the restriction of right-to-left parsing. To form a parse of the `S`
+    // rule in the extraction process we must move the cursor through the string, and to
+    // achieve linear behaviour we *must* only follow edges that form valid prefixes from
+    // the current point. This means that we must choose which `B` we will use before visiting
+    // `A`, or learning anything about which `A` parses are valid: that information is not
+    // found yet. However, the earley charts have incorrectly recognized `"a"` as a valid parse
+    // of `A` in this context, giving us an additional potential B parse. to disambiguate at B
+    // we need to discover which B belongs to the parse following the wide `A` prefix. This is,
+    // in general, not possible.
+
+    let (grammar, state_names) = cfg_toy::cfg! {
+        S A B ;
+        S ::= A B .
+        A ::= "a" "a" .
+        A ::= "a" .
+        B ::= "a" "b" .
+        B ::= "b" .
+    };
+    let grammar = grammar.map(|&sym| {
+        cfg_toy::LabelledSymbol {
+            symbol: sym,
+            label: sym.checked_sub(256).map(|idx| state_names[idx as usize]).unwrap_or("terminal"),
+        }
+    });
+    let mut trace = vec![];
+    let src = b"aab";
+    let src = cfg_toy::cast_buf(src);
+    let completions = cfg_toy::parse_earley(&grammar, src, 256, &mut trace);
+    for &(start, end, state) in &trace {
+        println!("{} {:?}", state_names[state as usize - 256], start..end);
+    }
+    trace.sort_by_key(|m| (m.1, m.2, -(m.0 as isize)));
+    let ast = cfg_toy::trace_to_ast(&grammar, src, &trace, &completions, &cfg_toy::LabelledSymbol {
+            symbol: 256, label: "S",
+    });
+    println!("{ast:?}");
 }
 
 fn parse_succeeds(grammar: &cfg_toy::grammar::Cfg<u32>, src: &[u8], init_sym: u32) {
