@@ -47,7 +47,10 @@ fn simple_logic() {
     let mut trace = vec![];
     let mycfg = mycfg.map(|&l| cfg_toy::LabelledSymbol {
         symbol: l,
-        label: l.checked_sub(256).map(|idx| state_names[idx as usize]).unwrap_or("terminal")
+        label: l
+            .checked_sub(256)
+            .map(|idx| state_names[idx as usize])
+            .unwrap_or("terminal"),
     });
     let init_sym = cfg_toy::LabelledSymbol {
         symbol: 256,
@@ -73,27 +76,27 @@ fn simple_logic() {
 // ## but the C we find could be from an unrelated branch
 // A ::= P C .
 // A ::= P "a" C "b".
-// 
+//
 // C ::= "a" "a" .
 // C ::= "a" .
-// 
+//
 // P ::= "a". // (just adding this prefix to obscure the start of the rule)
-// 
+//
 //   C
 //   |
 //  --
 // aaab
-// 
+//
 // so here while attempting A#2, choosing this incorrect C would be
 // a trap and incorrectly fail the rule.
-// 
+//
 // repetition within a rule never risks this, because we can only be
 // looking at the last NT child of the prefix.
-// 
+//
 // so if necessary a fix *is* to remember the branch we're parsing.
 // C(aaa) would know that it's returning to A#1 and therefore we dont
 // use it.
-// 
+//
 // ooh the completion stores truly exactly the info we need here: C#1
 // returns to a completion of `[]` and C#2` returns to a completion of
 // `["b"]`. that's exactly the question we're asking "is this a prefix
@@ -107,7 +110,8 @@ fn aliased_rules() {
 
         C ::= "a" "a" .
         C ::= "a" .
-    }.0;
+    }
+    .0;
     let src = "aab".as_bytes();
     let mut trace = vec![];
     let completions = cfg_toy::parse_earley(&grammar, src, 256, &mut trace);

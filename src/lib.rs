@@ -43,7 +43,7 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
                 let x: &mut Node<'c, Symbol> = &mut ast[idx];
                 x.transitive_children = current - idx - 1;
                 continue;
-            },
+            }
         };
         // println!("{state:?} under {:?}", stack.iter().map(|(_, s)| s).collect::<Vec<_>>());
         let state_nt = match state.as_part() {
@@ -56,40 +56,53 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
         let stack_len = stack.len();
         for rule in rules {
             stack.truncate(stack_len);
-            println!("  trying rule {state:?}{:?} for span {:?}", rule.parts, span);
+            println!(
+                "  trying rule {state:?}{:?} for span {:?}",
+                rule.parts, span
+            );
             // Here we implement the disambiguation semantics.
             // Whichever rules we visit first here will immediately be selected and we continue,
             // so the ordering of the rules from the cfg gives priority.
             // However in the current implementation this is right-to-left. The difference from left-to-right
             // is quite subtle and only sometimes observable.
-            // 
+            //
             // if ::= "if" cond "then" stmt
             // if ::= "if" cond "then" stmt ("else" stmt)?
             // if a then b else if c then d else e
-            // 
+            //
             // by applying from the right, this disambiguation greedily selects
-            // (if c then d else e), insteadof ... oh lmao ltr does the same thing for 
+            // (if c then d else e), insteadof ... oh lmao ltr does the same thing for
             // for a different reason
-            // 
+            //
             // expr ::= expr "<" expr
             // expr ::= expr ">" expr
             // expr ::= expr "<" expr ">"
             // expr ::= expr "(" expr ")"
             // expr ::= "(" expr ")"
-            // 
+            //
             // f<a>(b)
-            // 
+            //
             // from the right: start trying to form a call, find a generic.
             // from the left: comparison, then rhs is another comparison with a parenthesized b.
-            // 
+            //
             // great! actually pinned it down. So a goal here would be to also efficiently implement
             // ltr disambiguation. And the critical challenge is that our data is naturally
             // asymmetrical: The information about `end`s comes from the Trace, and the paired
             // starts comes from the completions.
-            // 
+            //
             // whether that'll be an issue is to be seen! I'll have to try the implementation
-            if matched_rule(span, start, trace, completions, &rule.parts, &mut stack, state_nt, span.len()) {
-                if let Some(CallFrame::ProcessNode(new_span, first_child)) = stack.last().filter(|_| stack_len + 1 == stack.len())
+            if matched_rule(
+                span,
+                start,
+                trace,
+                completions,
+                &rule.parts,
+                &mut stack,
+                state_nt,
+                span.len(),
+            ) {
+                if let Some(CallFrame::ProcessNode(new_span, first_child)) =
+                    stack.last().filter(|_| stack_len + 1 == stack.len())
                     && let Err(new_nt) = first_child.as_part()
                     && new_nt == state_nt
                     && new_span.len() == span.len()
@@ -99,7 +112,6 @@ pub fn trace_to_ast<'c, Symbol: CfgSymbol + PartialEq>(
                     // I think we might be able to use the same trick from eta rules though: we can always
                     // jump through identity definitions
                 } else {
-
                     // push nodes to ast
                     let end = start + span.len();
                     ast.push(Node {
@@ -170,10 +182,8 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
             }
             Either::Err(sym) => {
                 // find the last occurrence of this symbol in the trace that ends at src_index + 1
-                let Some((start, end, _)) = trace
-                    .iter()
-                    .rfind(|&&(start, end, s)|
-                        s == sym && end == (src.len() + offset)
+                let Some((start, end, _)) = trace.iter().rfind(|&&(start, end, s)| {
+                    s == sym && end == (src.len() + offset)
                         // FIXME: This needs to work recursively again,
                         // if a rule is left/right recursive but hidden through another rule
                         && (s != parent_sym || (end - start) < parent_len)
@@ -183,12 +193,14 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                                 // The completion must cover the nodes we've parsed so far
                                 && dbg!(st.remaining) == dbg!(&rule[iter.as_slice().len() + 1..])
                             )
-                    )
-                else {
+                }) else {
                     return false;
                 };
                 // println!("pushing {start}..{end} for sym {sym}");
-                children.push(CallFrame::ProcessNode(&src[*start - offset..*end - offset], part));
+                children.push(CallFrame::ProcessNode(
+                    &src[*start - offset..*end - offset],
+                    part,
+                ));
                 src = &src[..start - offset];
                 let i = trace.partition_point(|(_, match_end, _)| match_end <= start);
                 trace = &trace[..i];
@@ -213,13 +225,13 @@ pub fn print_ast<'a, 'c, S: CfgSymbol + PartialEq>(ast: &'a [Node<'c, S>], inden
     struct DebugIt<'a, S: CfgSymbol>(&'a [Node<'a, S>], usize);
     impl<S> std::fmt::Debug for DebugIt<'_, S>
     where
-    S: CfgSymbol + PartialEq,
+        S: CfgSymbol + PartialEq,
     {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let ast = self.0;
             let indent = self.1;
             let node = &ast[0];
-            for _ in 0..indent  {
+            for _ in 0..indent {
                 write!(f, " ")?;
             }
             write!(f, "- {}..{} ", node.start, node.end)?;
@@ -241,22 +253,22 @@ pub fn print_ast<'a, 'c, S: CfgSymbol + PartialEq>(ast: &'a [Node<'c, S>], inden
                         if (transition.len() == 1)
                             && result_edges.is_empty()
                             && !child[0].transition.is_empty()
-                            {
+                        {
                             assert_eq!(rest.len(), 0);
                             transition = child[0].transition;
                             rem = &child[1..];
                             continue;
-                        } else 
-                        if child[0].transition.last() == Some(part) && rest.is_empty() {
+                        } else if child[0].transition.last() == Some(part) && rest.is_empty() {
                             if !transition.is_empty() {
                                 list_terminators.push(&transition[1..]);
                             }
                             transition = child[0].transition;
                             rem = &child[1..];
                             continue;
-                        } else if 
-                            child[..child.len() - 1].iter().all(|node| node.children == 1)
-                        // child.len() == 1 || child.len() == 0 
+                        } else if child[..child.len() - 1]
+                            .iter()
+                            .all(|node| node.children == 1)
+                        // child.len() == 1 || child.len() == 0
                         {
                             let mut js = vec![0; child.len() - 1];
                             for (i, jo) in js.iter_mut().enumerate() {
@@ -266,7 +278,7 @@ pub fn print_ast<'a, 'c, S: CfgSymbol + PartialEq>(ast: &'a [Node<'c, S>], inden
                                     Either::Err(_) => {
                                         *jo = 1;
                                         continue;
-                                    },
+                                    }
                                 };
                                 rule_desc.entry(&format_args!("^{:?}", first.borrow()));
                                 for i in 1..leaf.transition.len() {
@@ -275,7 +287,7 @@ pub fn print_ast<'a, 'c, S: CfgSymbol + PartialEq>(ast: &'a [Node<'c, S>], inden
                                         Either::Err(_) => {
                                             *jo = i + 1;
                                             continue;
-                                        },
+                                        }
                                     };
                                     rule_desc.entry(&term.borrow());
                                 }
@@ -297,7 +309,7 @@ pub fn print_ast<'a, 'c, S: CfgSymbol + PartialEq>(ast: &'a [Node<'c, S>], inden
                                     rule_desc.entry(sym);
                                 }
                             }
-                        } else  {
+                        } else {
                             rule_desc.entry(part);
                             result_edges.push(child);
                         }
@@ -334,8 +346,7 @@ impl Ord for LabelledSymbol {
     }
 }
 impl PartialOrd for LabelledSymbol {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
-    {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
@@ -358,7 +369,8 @@ impl std::fmt::Debug for Utf8SingleByte {
 }
 impl CfgSymbol for LabelledSymbol {
     type Terminal = Utf8SingleByte;
-    type TerminalRef<'a> = Utf8SingleByte
+    type TerminalRef<'a>
+        = Utf8SingleByte
     where
         Self: 'a;
     fn as_part(&self) -> Either<Self::TerminalRef<'_>, NtSymbol> {

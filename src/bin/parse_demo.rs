@@ -55,7 +55,6 @@ fn main() {
     let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &init_sym);
     println!("{ast:?}");
 
-
     let (json_cfg, state_names) = cfg_toy::cfg! {
         json
         value
@@ -65,10 +64,10 @@ fn main() {
         escape hex
         number integer digits digit onenine fraction exponent sign
         ws af;
-        
+
 
         json ::= element.
-        
+
         value ::= object.
         value ::= array.
         value ::= string.
@@ -76,7 +75,7 @@ fn main() {
         value ::= "true".
         value ::= "false".
         value ::= "null".
-        
+
         object ::= "{" ws "}".
         object ::= "{" members "}".
 
@@ -89,7 +88,7 @@ fn main() {
 
         elements ::= element.
         elements ::= element "," elements.
-        
+
         element ::= ws value ws.
 
         string ::= "\"" characters "\"".
@@ -172,7 +171,7 @@ fn main() {
         onenine ::= "7" .
         onenine ::= "8" .
         onenine ::= "9" .
-        
+
         fraction ::= .
         fraction ::= "." digits .
 
@@ -188,7 +187,7 @@ fn main() {
         ws ::= " " ws.
         ws ::= "\n" ws.
 
-        
+
         af ::= "a" .
         af ::= "b" .
         af ::= "c" .
@@ -200,7 +199,10 @@ fn main() {
         cfg_toy::LabelledSymbol {
             symbol: sym,
             // TODO: can make the terminals actually visible if we like
-            label: sym.checked_sub(256).map(|idx| state_names[idx as usize]).unwrap_or("terminal"),
+            label: sym
+                .checked_sub(256)
+                .map(|idx| state_names[idx as usize])
+                .unwrap_or("terminal"),
         }
     });
 
@@ -217,7 +219,7 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
             *b = b'a' + (*b % 5);
         }
     }
-    
+
     // for rule in &json_cfg.rules {
     //     println!("{rule:?}");
     // }
@@ -266,7 +268,7 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         escape ::= "\\" "\"" .
         escape ::= "\\" "\\" .
         escape ::= "\\" "n" .
-        
+
         alpha ::= "a" .
         alpha ::= "b" .
         alpha ::= "c" .
@@ -294,12 +296,13 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         alpha ::= "y" .
         alpha ::= "z" .
     };
-    let bnf_grammar = bnf_grammar.map(|&sym| {
-        cfg_toy::LabelledSymbol {
-            symbol: sym,
-            label: sym.checked_sub(256).map(|idx| state_names[idx as usize]).unwrap_or("terminal"),
-        }
-    }); 
+    let bnf_grammar = bnf_grammar.map(|&sym| cfg_toy::LabelledSymbol {
+        symbol: sym,
+        label: sym
+            .checked_sub(256)
+            .map(|idx| state_names[idx as usize])
+            .unwrap_or("terminal"),
+    });
     let src = br#"
         ws ::= " " .
         ws ::= "\n" .
@@ -364,9 +367,16 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     let mut trace = vec![];
     let completions = cfg_toy::parse_earley(&bnf_grammar, src, 256, &mut trace);
     trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
-    let ast = cfg_toy::trace_to_ast(&bnf_grammar, src, &trace, &completions, &cfg_toy::LabelledSymbol {
-            symbol: 256, label: "grammar",
-    });
+    let ast = cfg_toy::trace_to_ast(
+        &bnf_grammar,
+        src,
+        &trace,
+        &completions,
+        &cfg_toy::LabelledSymbol {
+            symbol: 256,
+            label: "grammar",
+        },
+    );
     cfg_toy::print_ast(&ast, 0);
     panic!();
     // for el in &ast {
@@ -420,7 +430,10 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         cfg_toy::LabelledSymbol {
             symbol: sym,
             // TODO: can make the terminals actually visible if we like
-            label: sym.checked_sub(256).map(|idx| state_names[idx as usize]).unwrap_or("terminal"),
+            label: sym
+                .checked_sub(256)
+                .map(|idx| state_names[idx as usize])
+                .unwrap_or("terminal"),
         }
     });
     let mut trace = vec![];
@@ -433,11 +446,17 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         println!("{} {:?}", state_names[state as usize - 256], start..end);
     }
     trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
-    let ast = cfg_toy::trace_to_ast(&ambiguous_grammar, src, &trace, &completions, &cfg_toy::LabelledSymbol {
+    let ast = cfg_toy::trace_to_ast(
+        &ambiguous_grammar,
+        src,
+        &trace,
+        &completions,
+        &cfg_toy::LabelledSymbol {
             symbol: 256,
             // TODO: can make the terminals actually visible if we like
             label: "expr",
-        });
+        },
+    );
     println!("{ast:?}");
     // let (dangling_else, state_names) = cfg_toy::cfg! {
     //     expr lt gt generic functioncall primary ident ws gap;
@@ -462,20 +481,29 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     //     primary ::= ident .
     // };
 
-
-    parse_succeeds(&cfg_toy::cfg! {
-        start list ;
-        start ::= list .
-        list ::= "a" .
-        list ::= "a" list .
-    }.0, b"aaa", 256);
-    parse_succeeds(&cfg_toy::cfg! {
-        start flexible ;
-        start ::= "a" flexible "c" . // abb succeeds until c.
-        start ::= "a" "b" flexible . // abb works with only a single b
-        flexible ::= "b" "b" .
-        flexible ::= "b"  .
-    }.0,  b"abb", 256);
+    parse_succeeds(
+        &cfg_toy::cfg! {
+            start list ;
+            start ::= list .
+            list ::= "a" .
+            list ::= "a" list .
+        }
+        .0,
+        b"aaa",
+        256,
+    );
+    parse_succeeds(
+        &cfg_toy::cfg! {
+            start flexible ;
+            start ::= "a" flexible "c" . // abb succeeds until c.
+            start ::= "a" "b" flexible . // abb works with only a single b
+            flexible ::= "b" "b" .
+            flexible ::= "b"  .
+        }
+        .0,
+        b"abb",
+        256,
+    );
     //     ```
     // S ::= A B .
     // A ::= "a" "a" . // prefer
@@ -504,11 +532,12 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         B ::= "a" "b" .
         B ::= "b" .
     };
-    let grammar = grammar.map(|&sym| {
-        cfg_toy::LabelledSymbol {
-            symbol: sym,
-            label: sym.checked_sub(256).map(|idx| state_names[idx as usize]).unwrap_or("terminal"),
-        }
+    let grammar = grammar.map(|&sym| cfg_toy::LabelledSymbol {
+        symbol: sym,
+        label: sym
+            .checked_sub(256)
+            .map(|idx| state_names[idx as usize])
+            .unwrap_or("terminal"),
     });
     let mut trace = vec![];
     let src = b"aab";
@@ -518,9 +547,16 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         println!("{} {:?}", state_names[state as usize - 256], start..end);
     }
     trace.sort_by_key(|m| (m.1, m.2, -(m.0 as isize)));
-    let ast = cfg_toy::trace_to_ast(&grammar, src, &trace, &completions, &cfg_toy::LabelledSymbol {
-            symbol: 256, label: "S",
-    });
+    let ast = cfg_toy::trace_to_ast(
+        &grammar,
+        src,
+        &trace,
+        &completions,
+        &cfg_toy::LabelledSymbol {
+            symbol: 256,
+            label: "S",
+        },
+    );
     println!("{ast:?}");
 }
 
