@@ -12,6 +12,10 @@ fn main() {
         alpha ::= "a".
         alpha ::= "b".
         alpha ::= "c".
+        alpha ::= "t".
+        alpha ::= "r".
+        alpha ::= "u".
+        alpha ::= "e".
         ident ::= alpha ident.
         ident ::= alpha.
 
@@ -37,12 +41,75 @@ fn main() {
     };
     println!("{:?}", mycfg);
     mycfg.rules.sort_by_key(|rule| rule.for_nt);
-    cfg_toy::parse_earley(
+    let mut trace = vec![];
+    let src = "true or false and not false or bb".as_bytes();
+    let completions = cfg_toy::parse_earley(
         &mycfg,
-        "true or false and not false or bb".as_bytes(),
+        src,
         256,
-        (),
+        &mut trace,
     );
+    trace.sort_by_key(|m| (m.1, -(m.2 as i32)));
+    struct PrintRemainingList<'a, Symbol>(
+        &'a [(u32, (usize, u32, cfg_toy::completions::Remaining<'a, Symbol>))],
+        &'a [cfg_toy::recognizer::State<'a, Symbol>],
+    );
+    impl<Symbol: core::fmt::Debug> core::fmt::Debug for PrintRemainingList<'_, Symbol> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let mut list = f.debug_list();
+            for &(ntsym, (back_ref, sym_here, ref rem)) in self.0 {
+                match rem {
+                    cfg_toy::completions::Remaining::EmptyAndForwardingTo(start, end) => {
+                        list.entry(&format_args!(
+                            "\n  ({}, ({}, {}, bypass[{}..{}]({:?})))",
+                            ntsym,
+                            back_ref,
+                            sym_here,
+                            start,
+                            end,
+                            &self.1[*start..*end]
+                        ));
+                    }
+                    cfg_toy::completions::Remaining::More(syms) => {
+                        list.entry(&format_args!("\n  {:?}", (ntsym, (back_ref, sym_here, syms))));
+                    }
+                }
+            }
+            list.finish()
+        }
+    }
+    for (i, window) in completions.completion_index.windows(2).enumerate() {
+        println!("{i:02} {:?}", PrintRemainingList(
+            &completions.completions[window[0]..window[1]],
+            &completions.forwarding_records,
+        ));
+        // println!("{i:02} {:?}", &completions.completions[window[0]..window[1]]);
+    }
+    println!("{trace:?}");
+    // let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &256);
+    // cfg_toy::print_ast(&ast, 0);
+
+    let (right_assoc_cfg, _) = cfg_toy::cfg! {
+        S A;
+        S ::= .
+        S ::= A.
+        A ::= "a" A.
+        A ::= "a".
+    };
+    let src = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_bytes();
+    let mut trace = vec![];
+    let completions = cfg_toy::parse_earley(&right_assoc_cfg, src, 256, &mut trace);
+    for (i, window) in completions.completion_index.windows(2).enumerate() {
+        println!("{i:02} {:?}", PrintRemainingList(
+            &completions.completions[window[0]..window[1]],
+            &completions.forwarding_records,
+        ));
+        // println!("{i:02} {:?}", &completions.completions[window[0]..window[1]]);
+    }
+    println!("{trace:?}");
+    let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &256);
+    cfg_toy::print_ast(&ast, 0);
+    panic!();
     cfg_toy::parse_earley(&mycfg, "true then".as_bytes(), 256, ());
     let src = "true then".as_bytes();
     let init_sym = 256;

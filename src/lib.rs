@@ -1,7 +1,7 @@
 mod buffer_pair;
-mod completions;
+pub mod completions;
 pub mod grammar;
-mod recognizer;
+pub mod recognizer;
 mod set_buffers;
 use std::borrow::Borrow;
 
@@ -201,7 +201,7 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                         // if a rule is left/right recursive but hidden through another rule
                         && (s != parent_sym || (end - start) < parent_len)
                         && completions
-                            .query(start, sym)
+                            .query_without_cache_update(start, sym)
                             .any(|st| st.back_ref ==  offset && st.sym == parent_sym
                                 // The completion must cover the nodes we've parsed so far
                                 && st.remaining == &rule[iter.as_slice().len() + 1..]

@@ -26,12 +26,12 @@ impl TraceAt for () {
 pub(crate) type NtSymbol = u32;
 // TODO: can switch this to encoding the sym id into the slice.
 // the standard presentation is that these store (Rule, rule_offset)
-pub(crate) type Completion<'a, Symbol> = (NtSymbol, State<'a, Symbol>);
+
 #[derive(Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
-pub(crate) struct State<'a, Symbol> {
-    pub(crate) back_ref: usize,
-    pub(crate) sym: NtSymbol,
-    pub(crate) remaining: &'a [Symbol],
+pub struct State<'a, Symbol> {
+    pub back_ref: usize,
+    pub sym: NtSymbol,
+    pub remaining: &'a [Symbol],
 }
 impl<'a, Symbol> Clone for State<'a, Symbol> {
     fn clone(&self) -> Self {
@@ -83,7 +83,7 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
     let mut completions = Completions::new(src.len());
 
     for (cursor, input_symbol) in src.iter().enumerate() {
-        // println!("{cursor}@{states:?}");
+        println!("{cursor}@{states:?}");
         let mut step = EarleyStep {
             cfg,
             input_symbol,
@@ -138,10 +138,10 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
                     super::Either::Err(nt) => {
                         // Synthesize a completion that'll never be used,
                         // we still need to indicate that ws is a valid child for us
-                        completions_tx.push((
+                        completions_tx.push(
                             nt,
                             mk_state(state.back_ref, state.sym, &state.remaining[1..]),
-                        ));
+                        );
                         // FIXME: transitive please
                         let can_skip = cfg.rules_for(nt).any(|rule| rule.parts.is_empty());
                         if can_skip {
@@ -176,7 +176,7 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
     fn expand_state(&mut self, state: State<'c, Symbol>, new: &mut Vec<State<'c, Symbol>>) {
         let Some(sym) = state.remaining.first() else {
             // This state has recognized its nontermininal starting at state.back_ref
-            // println!("done with {:?}", state);
+            println!("done with {:?}", state);
             self.trace.completed(state.back_ref, state.sym);
             new.extend(self.completions_tx.query(state.back_ref, state.sym));
             return;
@@ -201,10 +201,10 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                 // To match a nonterminal, expand all the rules for it,
                 // and remember our state as a completion if the nonterminal successfully
                 // parses.
-                self.completions_tx.push((
+                self.completions_tx.push(
                     nt,
                     mk_state(state.back_ref, state.sym, &state.remaining[1..]),
-                ));
+                );
 
                 // We are about to predict a nonterminal.
                 // When an eta rule exists for it, it would attempt to dereference a back_ref
