@@ -58,8 +58,8 @@ fn simple_logic() {
     };
     let src = cfg_toy::cast_buf(src);
     let completions = cfg_toy::parse_earley(&mycfg, src, init_sym.symbol, &mut trace);
-    for &(start, end, state) in &trace {
-        println!("{} {:?}", state_names[state as usize - 256], start..end);
+    for &(start, end, state, rule) in &trace {
+        println!("{} {:?} {rule:?}", state_names[state as usize - 256], start..end);
     }
     trace.sort_by_key(|m| (m.1, m.2));
     let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &init_sym);

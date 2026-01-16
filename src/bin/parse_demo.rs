@@ -51,27 +51,28 @@ fn main() {
     );
     trace.sort_by_key(|m| (m.1, -(m.2 as i32)));
     struct PrintRemainingList<'a, Symbol>(
-        &'a [(u32, (usize, u32, cfg_toy::completions::Remaining<'a, Symbol>))],
+        &'a [(u32, (usize, u32, &'a [Symbol], cfg_toy::completions::Remaining<'a, Symbol>))],
         &'a [cfg_toy::recognizer::State<'a, Symbol>],
     );
     impl<Symbol: core::fmt::Debug> core::fmt::Debug for PrintRemainingList<'_, Symbol> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let mut list = f.debug_list();
-            for &(ntsym, (back_ref, sym_here, ref rem)) in self.0 {
+            for &(ntsym, (back_ref, sym_here, rule, ref rem)) in self.0 {
                 match rem {
                     cfg_toy::completions::Remaining::EmptyAndForwardingTo(start, end) => {
                         list.entry(&format_args!(
-                            "\n  ({}, ({}, {}, bypass[{}..{}]({:?})))",
+                            "\n  ({}, ({}, {}, {:?}, bypass[{}..{}]({:?})))",
                             ntsym,
                             back_ref,
                             sym_here,
+                            rule,
                             start,
                             end,
                             &self.1[*start..*end]
                         ));
                     }
                     cfg_toy::completions::Remaining::More(syms) => {
-                        list.entry(&format_args!("\n  {:?}", (ntsym, (back_ref, sym_here, syms))));
+                        list.entry(&format_args!("\n  {:?}", (ntsym, (back_ref, sym_here, rule, syms))));
                     }
                 }
             }
@@ -86,18 +87,20 @@ fn main() {
         // println!("{i:02} {:?}", &completions.completions[window[0]..window[1]]);
     }
     println!("{trace:?}");
-    // let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &256);
-    // cfg_toy::print_ast(&ast, 0);
+    let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &256);
+    cfg_toy::print_ast(&ast, 0);
 
     let (right_assoc_cfg, _) = cfg_toy::cfg! {
-        S A;
+        S A F;
         S ::= .
         S ::= A "b".
         A ::= "a" "a" A.
         A ::= "a" A.
-        A ::= "a".
+        A ::= F.
+        F ::= "a".
     };
-    let src = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab".as_bytes();
+    // let src = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab".as_bytes();
+    let src = "aaaaaaaaaaab".as_bytes();
     // let src = "aaaaaaaa".as_bytes();
     let mut trace = vec![];
     let completions = cfg_toy::parse_earley(&right_assoc_cfg, src, 256, &mut trace);
@@ -109,16 +112,16 @@ fn main() {
         // println!("{i:02} {:?}", &completions.completions[window[0]..window[1]]);
     }
     println!("{trace:?}");
-    let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &256);
+    let ast = cfg_toy::trace_to_ast(&right_assoc_cfg, src, &trace, &completions, &256);
     cfg_toy::print_ast(&ast, 0);
-    panic!();
+    // panic!();
     cfg_toy::parse_earley(&mycfg, "true then".as_bytes(), 256, ());
     let src = "true then".as_bytes();
     let init_sym = 256;
     let mut trace = vec![];
     let completions = cfg_toy::parse_earley(&mycfg, src, init_sym, &mut trace);
-    for &(start, end, state) in &trace {
-        println!("{} {:?}", state_names[state as usize - 256], start..end);
+    for &(start, end, state, rule) in &trace {
+        println!("{} {:?} {rule:?}", state_names[state as usize - 256], start..end);
     }
     trace.sort_by_key(|m| (m.1, m.2));
     let ast = cfg_toy::trace_to_ast(&mycfg, src, &trace, &completions, &init_sym);
@@ -281,7 +284,8 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
 // r#"[{"name": "Adeel Solangi","language": "Sindhi","id": "V59OF92YF627HFY0","bio": "Donec lobortis eleifend condimentum","version": 6.1}]"#
 // r#"[{"bio": "Donec lobortis eleifend condimentum","version": 6.1}]"#
 //r#"[{"a": "b", "c": "d", "e": "f", "g": "h"}]"#
-//r#"[1, 2, 3.1e6, 4, 5, 0]"#
+// r#"[1, 2, 3.1e6, 4, 5, 0]"#
+// r#"0 "#
 .as_bytes().to_vec();
     for b in &mut src {
         if b.is_ascii_uppercase() {
@@ -300,9 +304,20 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     let src = cfg_toy::cast_buf(&src);
     // panic!("{:?} {:?}", &src[215..220], &src[220..]);
     let completions = cfg_toy::parse_earley(&json_cfg, src, init_sym.symbol, &mut trace);
-    trace.sort_by_key(|m| (m.1, m.2));
+    // trace.sort_by_key(|m| (m.1, m.2));
     let ast = cfg_toy::trace_to_ast(&json_cfg, src, &trace, &completions, &init_sym);
     cfg_toy::print_ast(&ast, 0);
+    println!("{trace:?}");
+    // panic!();
+    // println!("{:?}", json_cfg.nt_nullable.iter().enumerate().collect::<Vec<_>>());
+    // // println!("{:?}", json_cfg.nt_to_nullable_rules_index.iter().enumerate().collect::<Vec<_>>());
+    // for window in json_cfg.nt_to_nullable_rules_index_offsets.windows(2) {
+    //     for i in &json_cfg.nt_to_nullable_rules_index[window[0]..window[1]] {
+    //         println!("  {i:?} {:?}", json_cfg.rules[*i]);
+    //     }
+    //     // println!("{:?}", &json_cfg.rules[]);
+    // }
+    // panic!();
 
     let (bnf_grammar_u32, state_names) = cfg_toy::cfg! {
         grammar rules rule rule_content nonterminal terminal symbols symbol ws gap alpha label characters character escape;
@@ -567,8 +582,8 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     let completions = cfg_toy::parse_earley(&ambiguous_grammar, src, 256, &mut trace);
     trace.sort_by_key(|m| (m.1, m.2, m.0));
     trace.dedup(); // empty rules get duplicated in the trace
-    for &(start, end, state) in &trace {
-        println!("{} {:?}", state_names[state as usize - 256], start..end);
+    for &(start, end, state, rule) in &trace {
+        println!("{} {:?} {rule:?}", state_names[state as usize - 256], start..end);
     }
     trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
     let ast = cfg_toy::trace_to_ast(
@@ -583,6 +598,7 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         },
     );
     println!("{ast:?}");
+    cfg_toy::print_ast(&ast, 0);
     // let (dangling_else, state_names) = cfg_toy::cfg! {
     //     expr lt gt generic functioncall primary ident ws gap;
 
@@ -668,8 +684,8 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     let src = b"aab";
     let src = cfg_toy::cast_buf(src);
     let completions = cfg_toy::parse_earley(&grammar, src, 256, &mut trace);
-    for &(start, end, state) in &trace {
-        println!("{} {:?}", state_names[state as usize - 256], start..end);
+    for &(start, end, state, rule) in &trace {
+        println!("{} {:?} {rule:?}  ", state_names[state as usize - 256], start..end);
     }
     trace.sort_by_key(|m| (m.1, m.2, -(m.0 as isize)));
     let ast = cfg_toy::trace_to_ast(

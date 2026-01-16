@@ -3,7 +3,7 @@ use crate::CfgSymbol;
 use super::recognizer::{NtSymbol, State};
 
 // pub(crate) type Completion<'a, Symbol> = (NtSymbol, State<'a, Symbol>);
-pub(crate) type Completion<'a, Symbol> = (NtSymbol, (usize, NtSymbol, Remaining<'a, Symbol>));
+pub(crate) type Completion<'a, Symbol> = (NtSymbol, (usize, NtSymbol, &'a [Symbol], Remaining<'a, Symbol>));
 #[derive(Debug)]
 pub enum Remaining<'a, Symbol> {
     EmptyAndForwardingTo(usize, usize),
@@ -40,7 +40,7 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
             completion_index,
         }
     }
-    fn query_range(&self, back_ref: usize, sym: NtSymbol) -> std::ops::Range<usize> {
+    pub(crate) fn query_range(&self, back_ref: usize, sym: NtSymbol) -> std::ops::Range<usize> {
         let start = self.completion_index[back_ref];
         let end = self.completion_index[back_ref + 1];
         let start_of_comps = start + self.completions[start..end].partition_point(|c| c.0 < sym);
@@ -60,12 +60,12 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
         let mut forwarding_drain = 0..0;
         core::iter::from_fn(move ||  {
             loop {
-                println!("Querying {back_ref} {sym} range={:?} {:?} fwd={:?}", range, &self.completions[range.clone()], forwarding_drain);
+                // println!("Querying {back_ref} {sym} range={:?} {:?} fwd={:?}", range, &self.completions[range.clone()], forwarding_drain);
                 if let Some(i) = forwarding_drain.next() {
                     return Some(self.forwarding_records[i].clone());
                 }
                 let i = range.next()?;
-                let (back_ref, sym, rem) = self.completions[i].1.clone();
+                let (back_ref, sym, rule, rem) = self.completions[i].1.clone();
                 break Some(match rem {
                     // FIXME?: there is a case where we find a forwarding candidate, but it's wasteful.
                     // in particular,
@@ -99,16 +99,17 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
                             sym: NtSymbol,
                         ) -> std::ops::Range<usize> {
                             let forward_to = completions.query_range(back_ref, sym);
+                            // println!("Found forwarding completions {:?} for {back_ref} {sym}", &completions.completions[forward_to.clone()]);
                             for j in forward_to.clone() {
-                                let (b_ref, s, rem) = completions.completions[j].1.clone();
+                                let (b_ref, s, _, rem) = completions.completions[j].1.clone();
                                 let Remaining::More([]) = rem else { continue };
                                 setup_bypass(completions, j, b_ref, s);
                             }
                             if forward_to.len() == 1 &&
-                                let Remaining::EmptyAndForwardingTo(start, end ) = completions.completions[forward_to.start].1.2
+                                let Remaining::EmptyAndForwardingTo(start, end ) = completions.completions[forward_to.start].1.3
                             {
                                 // already set up
-                                completions.completions[empty_rem_i].1.2 =
+                                completions.completions[empty_rem_i].1.3 =
                                     Remaining::EmptyAndForwardingTo(start, end);
                                 start..end
                             } else {
@@ -121,7 +122,7 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
                                 }
                                 let mut reuse = Reuse::Init;
                                 for j in forward_to {
-                                    let (b_ref, s, rem) = completions.completions[j].1.clone();
+                                    let (b_ref, s, rule, rem) = completions.completions[j].1.clone();
                                     match rem {
                                         Remaining::More(syms) => {
                                             let (start, end) = match reuse {
@@ -141,6 +142,7 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
                                             completions.forwarding_records.push(State {
                                                 back_ref: b_ref,
                                                 sym: s,
+                                                rule, 
                                                 remaining: syms,
                                             });
                                             reuse = Reuse::Forwarded(start, end + 1);
@@ -180,7 +182,7 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
                                 match reuse {
                                     Reuse::Init => end..end,
                                     Reuse::Reusing(start, end) => {
-                                        completions.completions[empty_rem_i].1.2 =
+                                        completions.completions[empty_rem_i].1.3 =
                                             Remaining::EmptyAndForwardingTo(start, end);
                                         start..end
                                     },
@@ -197,7 +199,7 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
                                         // let end = start + new_len;
                                         // completions.forwarding_records.truncate(end);
                                         // ```
-                                        completions.completions[empty_rem_i].1.2 =
+                                        completions.completions[empty_rem_i].1.3 =
                                             Remaining::EmptyAndForwardingTo(start, end);
                                         start..end
 
@@ -205,7 +207,17 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
                                 }
                             }
                         }
+                        // println!("Setting up bypass for {back_ref} {sym} {:?}", self.forwarding_records.len());
                         forwarding_drain = setup_bypass(self, i, back_ref, sym);
+                        if forwarding_drain.is_empty() {
+                            return Some(State {
+                                back_ref,
+                                sym,
+                                rule,
+                                remaining: &[],
+                            })
+                        }
+                        // println!("Using forwarding records {:?}..{:?} via {back_ref}/{sym}", forwarding_drain.start, forwarding_drain.end);
                         continue;
                         // if forward_to.len() == 1 {
 
@@ -215,6 +227,7 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
                     Remaining::More(syms) => State {
                         back_ref,
                         sym,
+                        rule,
                         remaining: syms,
                     },
                     Remaining::EmptyAndForwardingTo(start, end) => {
@@ -239,15 +252,38 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
         self.completions[range]
             .iter()
             .flat_map(|c| {
-                let (back_ref, sym, rem) = c.1.clone();
+                let (back_ref, sym, rule, rem) = c.1.clone();
                 match rem {
                     Remaining::More(syms) => Either::Left(core::iter::once(State {
                         back_ref,
                         sym,
+                        rule,
                         remaining: syms,
                     })),
                     Remaining::EmptyAndForwardingTo(start, end) => {
+                        // println!("Using forwarding records {:?}..{:?} via {back_ref}/{sym}", start, end);
                         Either::Right(self.forwarding_records[start..end].iter().cloned())
+                    }
+                }
+            })
+    }
+    pub(crate) fn query_original_without_cache_update(
+        &self,
+        back_ref: usize,
+        sym: NtSymbol,
+    ) -> impl Iterator<Item = State<'a, Symbol>> + '_ {
+        let range = self.query_range(back_ref, sym);
+        self.completions[range]
+            .iter()
+            .map(|c| {
+                let (back_ref, sym, rule, rem) = c.1.clone();
+                State {
+                    back_ref,
+                    sym,
+                    rule,
+                    remaining: match rem {
+                        Remaining::More(syms) => syms,
+                        Remaining::EmptyAndForwardingTo(start, end) => &[]
                     }
                 }
             })
@@ -301,7 +337,7 @@ impl<'a, 'b, Symbol: Ord + CfgSymbol> CompletionsTransaction<'a, 'b, Symbol> {
     pub(crate) fn push(&mut self, nt: NtSymbol, state: State<'a, Symbol>) {
         self.completions.completions.push((
             nt,
-            (state.back_ref, state.sym, Remaining::More(state.remaining)),
+            (state.back_ref, state.sym, state.rule, Remaining::More(state.remaining)),
         ));
     }
     pub(crate) fn batch_id(&self) -> usize {

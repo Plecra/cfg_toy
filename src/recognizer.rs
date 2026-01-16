@@ -4,22 +4,22 @@ use crate::buffer_pair::{BufferPair, Transfer};
 use crate::completions::{Completions, CompletionsTransaction};
 use crate::set_buffers::{grow_ordered_set, isolate_new_elements, sorted_set};
 
-pub trait TraceAt {
-    fn completed(&mut self, back_ref: usize, sym: NtSymbol);
+pub trait TraceAt<'a, Symbol> {
+    fn completed(&mut self, back_ref: usize, sym: NtSymbol, rule: &'a [Symbol]);
 }
-pub trait Trace {
-    fn at(&mut self, symbol_index: usize) -> impl TraceAt + '_;
+pub trait Trace<'a, Symbol> {
+    fn at(&mut self, symbol_index: usize) -> impl TraceAt<'a, Symbol> + '_;
 }
-impl<T: Trace> Trace for &'_ mut T {
-    fn at(&mut self, symbol_index: usize) -> impl TraceAt + '_ {
+impl<'a, T: Trace<'a, Symbol>, Symbol> Trace<'a, Symbol> for &'_ mut T {
+    fn at(&mut self, symbol_index: usize) -> impl TraceAt<'a, Symbol> + '_ {
         (**self).at(symbol_index)
     }
 }
-impl Trace for () {
-    fn at(&mut self, _symbol_index: usize) -> impl TraceAt + '_ {}
+impl<'a, Symbol> Trace<'a, Symbol> for () {
+    fn at(&mut self, _symbol_index: usize) -> impl TraceAt<'a, Symbol> + '_ {}
 }
-impl TraceAt for () {
-    fn completed(&mut self, _back_ref: usize, _sym: NtSymbol) {}
+impl<'a, Symbol> TraceAt<'a, Symbol> for () {
+    fn completed(&mut self, _back_ref: usize, _sym: NtSymbol, _rule: &'a [Symbol]) {}
 }
 
 // type Symbol = u32;
@@ -31,6 +31,7 @@ pub(crate) type NtSymbol = u32;
 pub struct State<'a, Symbol> {
     pub back_ref: usize,
     pub sym: NtSymbol,
+    pub rule: &'a [Symbol],
     pub remaining: &'a [Symbol],
 }
 impl<'a, Symbol> Clone for State<'a, Symbol> {
@@ -38,14 +39,16 @@ impl<'a, Symbol> Clone for State<'a, Symbol> {
         Self {
             back_ref: self.back_ref,
             sym: self.sym,
+            rule: self.rule,
             remaining: self.remaining,
         }
     }
 }
-fn mk_state<Symbol>(back_ref: usize, sym: NtSymbol, remaining: &[Symbol]) -> State<'_, Symbol> {
+fn mk_state<'a, Symbol>(back_ref: usize, sym: NtSymbol, rule: &'a [Symbol], remaining: &'a [Symbol]) -> State<'a, Symbol> {
     State {
         back_ref,
         sym,
+        rule,
         remaining,
     }
 }
@@ -62,15 +65,8 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
     cfg: &'c crate::grammar::Cfg<Symbol>,
     src: &'c [Symbol::Terminal],
     init_sym: u32,
-    mut trace: impl Trace,
+    mut trace: impl Trace<'c, Symbol>,
 ) -> Completions<'c, Symbol> {
-    let mut states = cfg
-        .query_nt(init_sym)
-        .unwrap()
-        .filter(|i| !cfg.rule_nullable[*i])
-        .map(|i| &cfg.rules[i])
-        .map(|r| mk_state(0, init_sym, &r.parts[..]))
-        .collect::<Vec<_>>();
     // println!("initial states: {:?}", states);
     // This is kept between iterations for double buffering to
     // save on allocating it.
@@ -82,8 +78,27 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
     // to revisit that
     let mut completions = Completions::new(src.len());
 
+    let mut states = cfg
+        .query_nt(init_sym)
+        .unwrap()
+        // .filter(|i| !cfg.rule_nullable[*i])
+        .map(|i| &cfg.rules[i])
+        .filter(|r| !r.parts.is_empty())
+        .map(|r| mk_state(0, init_sym, &r.parts[..], &r.parts[..]))
+        .collect::<Vec<_>>();
+    // println!("wut {:?}", cfg.query_nullable(init_sym).unwrap());
+    // println!("wut {:?}", cfg
+    //     .query_nt(init_sym)
+    //     .unwrap()
+    //     // .filter(|i| !cfg.rule_nullable[*i])
+    //     .map(|i| &cfg.rules[i]).collect::<Vec<_>>());
+    // println!("{cfg:?}");
+    for &rule in &cfg.nt_to_nullable_rules_index[cfg.query_nullable(init_sym).unwrap()] {
+        trace.at(0).completed(0, init_sym, &cfg.rules[rule].parts);
+    }
+
     for (cursor, input_symbol) in src.iter().enumerate() {
-        println!("{cursor}@{states:?}");
+        // println!("{cursor}@{states:?}");
         let mut step = EarleyStep {
             cfg,
             input_symbol,
@@ -111,6 +126,13 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
         grow_ordered_set(&mut new_states, |states| {
             step.expand_states(states);
         });
+        // TODO: we can improve the representation of states to encode the rule + nonterminal much more efficiently:
+        // The remaining data should be stored as an offset into the "rule data", where it's held as a null terminated
+        // string. These offsets can then use the high bits to encode the nonterminal and a rule id.
+        // These rule ids can be prepared ahead of time to deduplicate identical suffixes, so that A ::= B C. and A :: C D.
+        // would be represented by offset = rule_1_idx and offset = rule_2_idx, which would differ only in the bitmask
+        // for the rule they're from, so the deduplication step can merge them to the version of the rule that completes
+        // as rule_1 *and* rule_2.
         sorted_set(&mut step.next_states);
 
         let mut used_up_states = std::mem::replace(&mut states, step.next_states);
@@ -121,15 +143,19 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
         }
     }
     let mut completions_tx = completions.add_group();
+
     grow_ordered_set(&mut states, |mut states| {
         for i in 0..states.read().len() {
             let state = states.read()[i].clone();
             if state.remaining.is_empty() {
                 // This state has recognized its nontermininal starting at state.back_ref
-                trace.at(src.len()).completed(state.back_ref, state.sym);
+                trace.at(src.len()).completed(state.back_ref, state.sym, state.rule);
+                // println!("completed state report: {:?}", state);
                 states
                     .write()
-                    .extend(completions_tx.query(state.back_ref, state.sym));
+                    .extend(completions_tx.query(state.back_ref, state.sym)
+                    // .inspect(|c| println!("have completion {c:?}"))
+                );
                 continue;
             } else {
                 let sym = state.remaining.first().unwrap();
@@ -140,15 +166,17 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
                         // we still need to indicate that ws is a valid child for us
                         completions_tx.push(
                             nt,
-                            mk_state(state.back_ref, state.sym, &state.remaining[1..]),
+                            mk_state(state.back_ref, state.sym,
+                                state.rule, &state.remaining[1..]),
                         );
                         // FIXME: transitive please
                         let can_skip = cfg.rules_for(nt).any(|rule| rule.parts.is_empty());
                         if can_skip {
-                            trace.at(src.len()).completed(src.len(), nt);
+                            trace.at(src.len()).completed(src.len(), nt, &[]);
                             states.write().push(mk_state(
                                 state.back_ref,
                                 state.sym,
+                                state.rule,
                                 &state.remaining[1..],
                             ))
                         }
@@ -166,7 +194,37 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
     );
     completions
 }
-impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbol> {
+
+struct PrintRemainingList<'a, Symbol>(
+    &'a [(u32, (usize, u32, &'a [Symbol], crate::completions::Remaining<'a, Symbol>))],
+    &'a [crate::recognizer::State<'a, Symbol>],
+);
+impl<Symbol: core::fmt::Debug> core::fmt::Debug for PrintRemainingList<'_, Symbol> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_list();
+        for &(ntsym, (back_ref, sym_here, rule, ref rem)) in self.0 {
+            match rem {
+                crate::completions::Remaining::EmptyAndForwardingTo(start, end) => {
+                    list.entry(&format_args!(
+                        "\n  ({}, ({}, {}, {:?}, bypass[{}..{}]({:?})))",
+                        ntsym,
+                        back_ref,
+                        sym_here,
+                        rule,
+                        start,
+                        end,
+                        &self.1[*start..*end]
+                    ));
+                }
+                crate::completions::Remaining::More(syms) => {
+                    list.entry(&format_args!("\n  {:?}", (ntsym, (back_ref, sym_here, rule, syms))));
+                }
+            }
+        }
+        list.finish()
+    }
+}
+impl<'c, T: TraceAt<'c, Symbol>, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbol> {
     fn expand_states(&mut self, mut transfer: impl BufferPair<State<'c, Symbol>>) {
         for i in 0..transfer.read().len() {
             let state = transfer.read()[i].clone();
@@ -176,8 +234,7 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
     fn expand_state(&mut self, state: State<'c, Symbol>, new: &mut Vec<State<'c, Symbol>>) {
         let Some(sym) = state.remaining.first() else {
             // This state has recognized its nontermininal starting at state.back_ref
-            println!("done with {:?}", state);
-            self.trace.completed(state.back_ref, state.sym);
+            self.trace.completed(state.back_ref, state.sym, state.rule);
             new.extend(self.completions_tx.query(state.back_ref, state.sym));
             return;
         };
@@ -192,6 +249,7 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                     self.next_states.push(mk_state(
                         state.back_ref,
                         state.sym,
+                        state.rule,
                         &state.remaining[1..],
                     ));
                 }
@@ -203,7 +261,8 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                 // parses.
                 self.completions_tx.push(
                     nt,
-                    mk_state(state.back_ref, state.sym, &state.remaining[1..]),
+                    mk_state(state.back_ref, state.sym, 
+                                state.rule,&state.remaining[1..]),
                 );
 
                 // We are about to predict a nonterminal.
@@ -220,7 +279,15 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
 
                 if self.cfg.nt_nullable[nt as usize] {
                     // If the nonterminal is nullable, we can also skip it directly
-                    self.trace.completed(self.completions_tx.batch_id(), nt);
+                    #[allow(clippy::never_loop)]
+                    for &rule in &self.cfg.nt_to_nullable_rules_index[self.cfg.query_nullable(nt).unwrap()] {
+                        // println!("completing nullable rule {rule:?} {:?} for NT {}", self.cfg.rules[rule], nt);
+                        // println!("{:?}", &self.cfg.nt_to_nullable_rules_index[self.cfg.query_nullable(nt).unwrap()]);
+                        // println!("{:?}", &self.cfg.nt_to_nullable_rules_index[self.cfg.query_nullable(nt).unwrap()].iter().map(|&i| &self.cfg.rules[i]).collect::<Vec<_>>());
+                        // println!("{:?}", &self.cfg.nt_to_nullable_rules_index[self.cfg.query_nullable(nt + 1).unwrap()].iter().map(|&i| &self.cfg.rules[i]).collect::<Vec<_>>());
+                        // panic!();
+                        self.trace.completed(self.completions_tx.batch_id(), nt, &self.cfg.rules[rule].parts);
+                    }
                     // let mut visited = std::collections::HashSet::new();
                     // visited.insert(nt);
                     // let mut todo = vec![nt];
@@ -250,7 +317,8 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                     if state.remaining.len() != 1 || state.back_ref < self.completions_tx.batch_id()
                     {
                         self.expand_state(
-                            mk_state(state.back_ref, state.sym, &state.remaining[1..]),
+                            mk_state(state.back_ref, state.sym,
+                                state.rule, &state.remaining[1..]),
                             new,
                         );
                     }
@@ -278,6 +346,7 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                         new.push(mk_state(
                             self.completions_tx.batch_id(),
                             nt,
+                            &rule.parts[..],
                             &rule.parts[..],
                         ));
                     }

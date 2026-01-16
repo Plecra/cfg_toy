@@ -7,8 +7,8 @@ pub struct Rule<Symbol> {
 pub struct Cfg<Symbol> {
     pub rules: Vec<Rule<Symbol>>,
     pub rule_nullable: Vec<bool>,
-    // pub nt_to_nullable_rules_index: Vec<usize>,
-    // pub nt_to_nullable_rules_index_offsets: Vec<usize>,
+    pub nt_to_nullable_rules_index: Vec<usize>,
+    pub nt_to_nullable_rules_index_offsets: Vec<usize>,
     pub nt_nullable: Vec<bool>,
     pub nt_index: Vec<usize>,
 }
@@ -27,8 +27,8 @@ impl<Symbol> Cfg<Symbol> {
             nt_index: self.nt_index.clone(),
             rule_nullable: self.rule_nullable.clone(),
             nt_nullable: self.nt_nullable.clone(),
-            // nt_to_nullable_rules_index: self.nt_to_nullable_rules_index.clone(),
-            // nt_to_nullable_rules_index_offsets: self.nt_to_nullable_rules_index_offsets.clone(),
+            nt_to_nullable_rules_index: self.nt_to_nullable_rules_index.clone(),
+            nt_to_nullable_rules_index_offsets: self.nt_to_nullable_rules_index_offsets.clone(),
         }
     }
 }
@@ -43,7 +43,8 @@ fn nullable_closure<Symbol: crate::CfgSymbol>(rules: &[Rule<Symbol>]) -> (Vec<bo
             nt_nullable.push(false);
         }
         if is_nullable {
-            nt_nullable[nt] = true;
+            println!("Nullable rule for NT {} {rule:?} {:?}", nt, rule_nullable.len() - 1);
+            nt_nullable[dbg!(nt)] = true;
         }
     }
     {
@@ -59,7 +60,7 @@ fn nullable_closure<Symbol: crate::CfgSymbol>(rules: &[Rule<Symbol>]) -> (Vec<bo
                     Err(nt_sym) => nt_nullable[nt_sym as usize],
                 }) {
                     rule_nullable[i] = true;
-                    nt_nullable[rule.for_nt as usize] = true;
+                    nt_nullable[dbg!(rule.for_nt as usize)] = true;
                     dirty = true;
                 }
             }
@@ -80,34 +81,40 @@ impl<Symbol: super::CfgSymbol> Cfg<Symbol> {
         nt_index.push(rules.len());
 
         let (rule_nullable, nt_nullable) = nullable_closure(&rules);
-
-        // let mut nt_to_nullable_rules_index = rules.iter().enumerate().filter(|t| {
-        //     rule_nullable[t.0]
-        // }).map(|(i, _)| i).collect::<Vec<_>>();
-        // nt_to_nullable_rules_index.sort_by_key(|&i| rules[i].for_nt);
-        // let mut nt_to_nullable_rules_index_offsets = vec![];
-        // for (i, nri) in nt_to_nullable_rules_index.iter().enumerate() {
-        //     let nt = rules[*nri].for_nt as usize;
-        //     while nt_to_nullable_rules_index_offsets.len() <= nt {
-        //         nt_to_nullable_rules_index_offsets.push(i);
-        //     }
+        // for (i, rule) in rules.iter().enumerate() {
+        //     println!("Rule {}; {rule:?} nullable: {}", i, rule_nullable[i]);
         // }
+
+        let mut nt_to_nullable_rules_index = rules.iter().enumerate().filter(|t| {
+            rule_nullable[t.0]
+        }).map(|(i, _)| i).collect::<Vec<_>>();
+        nt_to_nullable_rules_index.sort_by_key(|&i| rules[i].for_nt);
+        let mut nt_to_nullable_rules_index_offsets = vec![];
+        for (i, nri) in nt_to_nullable_rules_index.iter().enumerate() {
+            let nt = rules[*nri].for_nt as usize;
+            while nt_to_nullable_rules_index_offsets.len() <= nt {
+                nt_to_nullable_rules_index_offsets.push(i);
+            }
+        }
+        while nt_to_nullable_rules_index_offsets.len() <= nt_nullable.len() {
+            nt_to_nullable_rules_index_offsets.push(nt_to_nullable_rules_index.len());
+        }
 
         Self {
             rules,
             rule_nullable,
             nt_nullable,
             nt_index,
-            // nt_to_nullable_rules_index,
-            // nt_to_nullable_rules_index_offsets,
+            nt_to_nullable_rules_index,
+            nt_to_nullable_rules_index_offsets,
         }
     }
-    // pub(crate) fn query_nullable(&self, nt: u32) -> Option<std::ops::Range<usize>> {
-    //     let nt = nt as usize;
-    //     let end = *self.nt_to_nullable_rules_index_offsets.get(nt)?;
-    //     let start = nt.checked_sub(1).and_then(|i| self.nt_to_nullable_rules_index_offsets.get(i)).copied().unwrap_or(0);
-    //     Some(start..end)
-    // }
+    pub(crate) fn query_nullable(&self, nt: u32) -> Option<std::ops::Range<usize>> {
+        let nt = nt as usize;
+        let start = *self.nt_to_nullable_rules_index_offsets.get(nt)?;
+        let end = self.nt_to_nullable_rules_index_offsets.get(nt + 1).copied().unwrap_or(0);
+        Some(start..end)
+    }
     pub(crate) fn query_nt(&self, nt: u32) -> Option<std::ops::Range<usize>> {
         let nt = nt as usize;
         // println!("{nt:?} {:?}", self.nt_index);
