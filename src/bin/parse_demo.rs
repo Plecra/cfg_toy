@@ -92,11 +92,13 @@ fn main() {
     let (right_assoc_cfg, _) = cfg_toy::cfg! {
         S A;
         S ::= .
-        S ::= A.
+        S ::= A "b".
+        A ::= "a" "a" A.
         A ::= "a" A.
         A ::= "a".
     };
-    let src = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_bytes();
+    let src = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab".as_bytes();
+    // let src = "aaaaaaaa".as_bytes();
     let mut trace = vec![];
     let completions = cfg_toy::parse_earley(&right_assoc_cfg, src, 256, &mut trace);
     for (i, window) in completions.completion_index.windows(2).enumerate() {

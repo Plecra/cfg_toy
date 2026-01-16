@@ -52,7 +52,8 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
         &'b mut self,
         back_ref: usize,
         sym: NtSymbol,
-    ) -> impl Iterator<Item = State<'a, Symbol>> + 'b {
+    ) -> impl Iterator<Item = State<'a, Symbol>> + 'b
+    where Symbol: PartialEq{
         let mut range = self.query_range(back_ref, sym);
         // let completions = &mut self.completions;
         // let forwarding_records: &'b [_] = &self.forwarding_records;
@@ -91,8 +92,7 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
                     // count the number of potential reuses via different rules.
                     // each rule can know "can occur as prefix of sibling rules > N times" as a flag.
                     Remaining::More([])  => {
-                        ;
-                        fn setup_bypass<'a, Symbol: CfgSymbol>(
+                        fn setup_bypass<'a, Symbol: CfgSymbol + PartialEq>(
                             completions: &mut Completions<'a, Symbol>,
                             empty_rem_i: usize,
                             back_ref: usize,
@@ -113,30 +113,96 @@ impl<'a, Symbol: CfgSymbol> Completions<'a, Symbol> {
                                 start..end
                             } else {
 
-                                let start = completions.forwarding_records.len();
+                                // let start = completions.forwarding_records.len();
+                                enum Reuse {
+                                    Init,
+                                    Forwarded(usize, usize),
+                                    Reusing(usize, usize),
+                                }
+                                let mut reuse = Reuse::Init;
                                 for j in forward_to {
                                     let (b_ref, s, rem) = completions.completions[j].1.clone();
                                     match rem {
                                         Remaining::More(syms) => {
+                                            let (start, end) = match reuse {
+                                                Reuse::Init => {
+                                                    let start = completions.forwarding_records.len();
+                                                    (start, start)
+                                                }
+                                                Reuse::Reusing(from_start, from_end) => {
+                                                    let start = completions.forwarding_records.len();
+                                                    completions.forwarding_records
+                                                        .extend_from_within(from_start..from_end);
+                                                    let end = completions.forwarding_records.len();
+                                                    (start, end)
+                                                }
+                                                Reuse::Forwarded(start, end) => (start, end)
+                                            };
                                             completions.forwarding_records.push(State {
                                                 back_ref: b_ref,
                                                 sym: s,
                                                 remaining: syms,
                                             });
+                                            reuse = Reuse::Forwarded(start, end + 1);
                                         }
                                         Remaining::EmptyAndForwardingTo(st, end) => {
-                                            completions.forwarding_records
-                                                .extend_from_within(st..end);
+                                            match reuse {
+                                                Reuse::Init => {
+                                                    reuse = Reuse::Reusing(st, end);
+                                                }
+                                                Reuse::Reusing(from_start, from_end) => {
+                                                    if completions.forwarding_records[from_start..from_end]
+                                                        == completions.forwarding_records[st..end]
+                                                    {
+                                                        // already reusing
+                                                        continue;
+                                                    }
+                                                    let start = completions.forwarding_records.len();
+                                                    completions.forwarding_records
+                                                        .extend_from_within(from_start..from_end);
+                                                    completions.forwarding_records
+                                                        .extend_from_within(st..end);
+                                                    let end = completions.forwarding_records.len();
+                                                    reuse = Reuse::Forwarded(start, end);
+                                                }
+                                                Reuse::Forwarded(from_start, from_end) => {
+                                                    completions.forwarding_records
+                                                        .extend_from_within(st..end);
+                                                    let end = completions.forwarding_records.len();
+                                                    reuse = Reuse::Forwarded(from_start, end);
+                                                }
+                                            }
                                         }
                                     }
                                 }
                                 let end = completions.forwarding_records.len();
-                                println!("{back_ref} {sym} {:?}", &completions.forwarding_records[start..end]);
-                                if start != end {
-                                    completions.completions[empty_rem_i].1.2 =
-                                        Remaining::EmptyAndForwardingTo(start, end);
+                                // println!("{back_ref} {sym} {:?}", &completions.forwarding_records[start..end]);
+                                match reuse {
+                                    Reuse::Init => end..end,
+                                    Reuse::Reusing(start, end) => {
+                                        completions.completions[empty_rem_i].1.2 =
+                                            Remaining::EmptyAndForwardingTo(start, end);
+                                        start..end
+                                    },
+                                    Reuse::Forwarded(start, end) => {
+                                        // FIXME: deduplication of the forwarding records might be useful here?
+                                        //   - if we complete A at a position with two parent rules that finish the same,
+                                        //   we'd avoid the bypass appearing to grow.
+                                        //
+                                        //   this is a likely candidate if the bypass buffer is growing way more
+                                        //   than expected.
+                                        // ```rs
+                                        // completions.forwarding_records[start..end].sort();
+                                        // let new_len = crate::set_buffers::slice_retain_with_context(&mut completions.forwarding_records[start..end], |cx, v| cx.last() != Some(v));
+                                        // let end = start + new_len;
+                                        // completions.forwarding_records.truncate(end);
+                                        // ```
+                                        completions.completions[empty_rem_i].1.2 =
+                                            Remaining::EmptyAndForwardingTo(start, end);
+                                        start..end
+
+                                    }
                                 }
-                                start..end
                             }
                         }
                         forwarding_drain = setup_bypass(self, i, back_ref, sym);
