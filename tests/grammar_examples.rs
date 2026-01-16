@@ -127,11 +127,13 @@ fn aliased_rules() {
 fn right_recursion() {
     let cfg = cfg_toy::cfg! {
         a;
-        
+
         a ::= "a" a .
         a ::= .
-    }.0;
-    let src = br#"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"#;
+    }
+    .0;
+    let src =
+        br#"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"#;
     cfg_toy::parse_earley(&cfg, src, 256, ());
     panic!();
 }

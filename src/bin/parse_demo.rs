@@ -382,7 +382,6 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     );
     cfg_toy::print_ast(&ast, 0);
     fn sample_input_size_growth(src_bytes: &[u8], bnf_grammar_u32: &cfg_toy::grammar::Cfg<u32>) {
-
         let mut data = vec![];
         let mut bench_content = vec![];
         for n in 32..48 {
@@ -393,35 +392,33 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
             let mut trace = vec![];
             println!("testing {n}");
             let start = std::time::Instant::now();
-            let completions = cfg_toy::parse_earley(
-                bnf_grammar_u32,
-                &bench_content,
-                256,
-                &mut trace,
-            );
+            let completions =
+                cfg_toy::parse_earley(bnf_grammar_u32, &bench_content, 256, &mut trace);
             // println!("{trace:?}");
             let built_trace = start.elapsed().as_secs_f64();
             // println!("now tracing {:?} {:?}", trace.len(), bench_content.len());
             trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
             let sorted_trace = start.elapsed().as_secs_f64();
-            _ = cfg_toy::trace_to_ast(
-                bnf_grammar_u32,
-                &bench_content,
-                &trace,
-                &completions,
-                &256,
-            );
-            data.push((built_trace, sorted_trace, start.elapsed().as_secs_f64(), target_length));
+            _ = cfg_toy::trace_to_ast(bnf_grammar_u32, &bench_content, &trace, &completions, &256);
+            data.push((
+                built_trace,
+                sorted_trace,
+                start.elapsed().as_secs_f64(),
+                target_length,
+            ));
         }
         println!("{data:?}");
     }
-    sample_input_size_growth(br#"aaaaaaaaaaaaa"#,
+    sample_input_size_growth(
+        br#"aaaaaaaaaaaaa"#,
         &cfg_toy::cfg! {
             a;
-            
+
             a ::= a "a" .
             a ::= .
-        }.0);
+        }
+        .0,
+    );
     // sample_input_size_growth(br#"
     //     grammar ::= gap rules gap .
     //     rules ::= rule .

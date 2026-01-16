@@ -8,7 +8,11 @@ use std::borrow::Borrow;
 pub use recognizer::{Trace, parse_earley};
 
 enum CallFrame<'a, 'c, Symbol: CfgSymbol> {
-    ProcessNode(&'a [Symbol::Terminal], &'a [(usize, usize, NtSymbol)], &'c Symbol),
+    ProcessNode(
+        &'a [Symbol::Terminal],
+        &'a [(usize, usize, NtSymbol)],
+        &'c Symbol,
+    ),
     ReturnToParent(usize),
 }
 // Build an AST for a trace of an unambiguous parse.
@@ -186,11 +190,9 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                 let Some((start, end, _)) = trace
                     .iter()
                     .rev()
-                    .take_while(|&&(_, match_end, _)| {
-                        (src.len() + offset) <= match_end
-                    })
+                    .take_while(|&&(_, match_end, _)| (src.len() + offset) <= match_end)
                     .find(|&&(start, end, s)| {
-                    ({
+                        ({
                         tests += 1;
                         true
                     }) &&
@@ -204,7 +206,8 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                                 // The completion must cover the nodes we've parsed so far
                                 && st.remaining == &rule[iter.as_slice().len() + 1..]
                             )
-                }) else {
+                    })
+                else {
                     return false;
                 };
                 // println!("! {tests:?}");

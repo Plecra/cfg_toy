@@ -240,14 +240,15 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                     //                 nt,
                     //                 mk_state(self.completions_tx.batch_id(), child_symbol, &parts[i..]),
                     //             ));
-                                
+
                     //             self.trace.completed(self.completions_tx.batch_id(), child_symbol);
                     //             visited.insert(child_symbol);
                     //             todo.push(child_symbol);
                     //         }
                     //     }
                     // }
-                    if state.remaining.len() != 1 || state.back_ref < self.completions_tx.batch_id() {
+                    if state.remaining.len() != 1 || state.back_ref < self.completions_tx.batch_id()
+                    {
                         self.expand_state(
                             mk_state(state.back_ref, state.sym, &state.remaining[1..]),
                             new,
@@ -259,20 +260,20 @@ impl<'c, T: TraceAt, Symbol: super::CfgSymbol + Ord> EarleyStep<'c, '_, T, Symbo
                     // FIXME: This also needs to be done transitively:
                     //
                     if rule.parts.is_empty() {
-                    //     // println!("    (epsilon)");
-                    //     // FIXME: Empty matches can be duplicated in the trace,
-                    //     // and should likely be de-duplicated.
-                    //     // This is still the most straightforward implementation for
-                    //     // the empty rules since it means the order that they're
-                    //     // processed in can't matter.
-                    //     // afaict it would also be possible to deliberately sort
-                    //     // out the empty rules and fire them after everything else
-                    //     // *then* repeat that until no more empty rules are left.
-                    //     self.trace.completed(self.completions_tx.batch_id(), nt);
-                    //     self.expand_state(
-                    //         mk_state(state.back_ref, state.sym, &state.remaining[1..]),
-                    //         new,
-                    //     );
+                        //     // println!("    (epsilon)");
+                        //     // FIXME: Empty matches can be duplicated in the trace,
+                        //     // and should likely be de-duplicated.
+                        //     // This is still the most straightforward implementation for
+                        //     // the empty rules since it means the order that they're
+                        //     // processed in can't matter.
+                        //     // afaict it would also be possible to deliberately sort
+                        //     // out the empty rules and fire them after everything else
+                        //     // *then* repeat that until no more empty rules are left.
+                        //     self.trace.completed(self.completions_tx.batch_id(), nt);
+                        //     self.expand_state(
+                        //         mk_state(state.back_ref, state.sym, &state.remaining[1..]),
+                        //         new,
+                        //     );
                     } else {
                         new.push(mk_state(
                             self.completions_tx.batch_id(),

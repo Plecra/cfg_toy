@@ -29,7 +29,6 @@ impl<Symbol> Cfg<Symbol> {
             nt_nullable: self.nt_nullable.clone(),
             // nt_to_nullable_rules_index: self.nt_to_nullable_rules_index.clone(),
             // nt_to_nullable_rules_index_offsets: self.nt_to_nullable_rules_index_offsets.clone(),
-
         }
     }
 }
@@ -113,7 +112,11 @@ impl<Symbol: super::CfgSymbol> Cfg<Symbol> {
         let nt = nt as usize;
         // println!("{nt:?} {:?}", self.nt_index);
         let end = *self.nt_index.get(nt)?;
-        let start = nt.checked_sub(1).and_then(|i| self.nt_index.get(i)).copied().unwrap_or(0);
+        let start = nt
+            .checked_sub(1)
+            .and_then(|i| self.nt_index.get(i))
+            .copied()
+            .unwrap_or(0);
         Some(start..end)
     }
     pub(crate) fn rules_for(&self, nt: u32) -> impl Iterator<Item = &'_ Rule<Symbol>> + '_ {
