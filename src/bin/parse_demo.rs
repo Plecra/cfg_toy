@@ -386,38 +386,41 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
         let mut data = vec![];
         let mut bench_content = vec![];
         for n in 32..48 {
-            while bench_content.len() < (n * 16 * 1024) {
+            let target_length = n * 16 * 1024;
+            while bench_content.len() < target_length {
                 bench_content.extend_from_slice(src_bytes);
             }
             let mut trace = vec![];
             println!("testing {n}");
             let start = std::time::Instant::now();
             let completions = cfg_toy::parse_earley(
-                &bnf_grammar_u32,
+                bnf_grammar_u32,
                 &bench_content,
                 256,
                 &mut trace,
             );
             // println!("{trace:?}");
-            println!("now tracing {:?} {:?}", trace.len(), bench_content.len());
+            let built_trace = start.elapsed().as_secs_f64();
+            // println!("now tracing {:?} {:?}", trace.len(), bench_content.len());
             trace.sort_by_key(|m| (m.1, m.2, (m.0 as isize)));
-            let ast = cfg_toy::trace_to_ast(
-                &bnf_grammar_u32,
+            let sorted_trace = start.elapsed().as_secs_f64();
+            _ = cfg_toy::trace_to_ast(
+                bnf_grammar_u32,
                 &bench_content,
                 &trace,
                 &completions,
                 &256,
             );
-            data.push((start.elapsed().as_secs_f64(), n));
+            data.push((built_trace, sorted_trace, start.elapsed().as_secs_f64(), target_length));
         }
         println!("{data:?}");
     }
     sample_input_size_growth(br#"aaaaaaaaaaaaa"#,
         &cfg_toy::cfg! {
-            A;
+            a;
             
-            A ::= A "a" .
-            A ::= .
+            a ::= a "a" .
+            a ::= .
         }.0);
     // sample_input_size_growth(br#"
     //     grammar ::= gap rules gap .
@@ -434,7 +437,7 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     // println!("now printing");
     // cfg_toy::print_ast(&ast, 0);
 
-    panic!();
+    // panic!();
     // for el in &ast {
     //     println!("{el:?}");
     // }
@@ -581,12 +584,12 @@ r#"[{"name": "tala","strapped": "somewhat"}, {"compiler":"rustc","version": 7.27
     // in general, not possible.
 
     let (grammar, state_names) = cfg_toy::cfg! {
-        S A B ;
-        S ::= A B .
-        A ::= "a" "a" .
-        A ::= "a" .
-        B ::= "a" "b" .
-        B ::= "b" .
+        s a b ;
+        s ::= a b .
+        a ::= "a" "a" .
+        a ::= "a" .
+        b ::= "a" "b" .
+        b ::= "b" .
     };
     let grammar = grammar.map(|&sym| cfg_toy::LabelledSymbol {
         symbol: sym,

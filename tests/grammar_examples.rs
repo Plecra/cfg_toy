@@ -104,12 +104,12 @@ fn simple_logic() {
 #[test]
 fn aliased_rules() {
     let grammar = cfg_toy::cfg! {
-        A C;
-        A ::= C .
-        A ::= "a" C "b".
+        a c;
+        a ::= c .
+        a ::= "a" c "b".
 
-        C ::= "a" "a" .
-        C ::= "a" .
+        c ::= "a" "a" .
+        c ::= "a" .
     }
     .0;
     let src = "aab".as_bytes();
@@ -126,10 +126,10 @@ fn aliased_rules() {
 #[test]
 fn right_recursion() {
     let cfg = cfg_toy::cfg! {
-        A;
+        a;
         
-        A ::= "a" A .
-        A ::= .
+        a ::= "a" a .
+        a ::= .
     }.0;
     let src = br#"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"#;
     cfg_toy::parse_earley(&cfg, src, 256, ());

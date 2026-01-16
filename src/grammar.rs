@@ -7,8 +7,8 @@ pub struct Rule<Symbol> {
 pub struct Cfg<Symbol> {
     pub rules: Vec<Rule<Symbol>>,
     pub rule_nullable: Vec<bool>,
-    pub nt_to_nullable_rules_index: Vec<usize>,
-    pub nt_to_nullable_rules_index_offsets: Vec<usize>,
+    // pub nt_to_nullable_rules_index: Vec<usize>,
+    // pub nt_to_nullable_rules_index_offsets: Vec<usize>,
     pub nt_nullable: Vec<bool>,
     pub nt_index: Vec<usize>,
 }
@@ -27,8 +27,8 @@ impl<Symbol> Cfg<Symbol> {
             nt_index: self.nt_index.clone(),
             rule_nullable: self.rule_nullable.clone(),
             nt_nullable: self.nt_nullable.clone(),
-            nt_to_nullable_rules_index: self.nt_to_nullable_rules_index.clone(),
-            nt_to_nullable_rules_index_offsets: self.nt_to_nullable_rules_index_offsets.clone(),
+            // nt_to_nullable_rules_index: self.nt_to_nullable_rules_index.clone(),
+            // nt_to_nullable_rules_index_offsets: self.nt_to_nullable_rules_index_offsets.clone(),
 
         }
     }
@@ -82,33 +82,33 @@ impl<Symbol: super::CfgSymbol> Cfg<Symbol> {
 
         let (rule_nullable, nt_nullable) = nullable_closure(&rules);
 
-        let mut nt_to_nullable_rules_index = rules.iter().enumerate().filter(|t| {
-            rule_nullable[t.0]
-        }).map(|(i, _)| i).collect::<Vec<_>>();
-        nt_to_nullable_rules_index.sort_by_key(|&i| rules[i].for_nt);
-        let mut nt_to_nullable_rules_index_offsets = vec![];
-        for (i, nri) in nt_to_nullable_rules_index.iter().enumerate() {
-            let nt = rules[*nri].for_nt as usize;
-            while nt_to_nullable_rules_index_offsets.len() <= nt {
-                nt_to_nullable_rules_index_offsets.push(i);
-            }
-        }
+        // let mut nt_to_nullable_rules_index = rules.iter().enumerate().filter(|t| {
+        //     rule_nullable[t.0]
+        // }).map(|(i, _)| i).collect::<Vec<_>>();
+        // nt_to_nullable_rules_index.sort_by_key(|&i| rules[i].for_nt);
+        // let mut nt_to_nullable_rules_index_offsets = vec![];
+        // for (i, nri) in nt_to_nullable_rules_index.iter().enumerate() {
+        //     let nt = rules[*nri].for_nt as usize;
+        //     while nt_to_nullable_rules_index_offsets.len() <= nt {
+        //         nt_to_nullable_rules_index_offsets.push(i);
+        //     }
+        // }
 
         Self {
             rules,
             rule_nullable,
             nt_nullable,
             nt_index,
-            nt_to_nullable_rules_index,
-            nt_to_nullable_rules_index_offsets,
+            // nt_to_nullable_rules_index,
+            // nt_to_nullable_rules_index_offsets,
         }
     }
-    pub(crate) fn query_nullable(&self, nt: u32) -> Option<std::ops::Range<usize>> {
-        let nt = nt as usize;
-        let end = *self.nt_to_nullable_rules_index_offsets.get(nt)?;
-        let start = nt.checked_sub(1).and_then(|i| self.nt_to_nullable_rules_index_offsets.get(i)).copied().unwrap_or(0);
-        Some(start..end)
-    }
+    // pub(crate) fn query_nullable(&self, nt: u32) -> Option<std::ops::Range<usize>> {
+    //     let nt = nt as usize;
+    //     let end = *self.nt_to_nullable_rules_index_offsets.get(nt)?;
+    //     let start = nt.checked_sub(1).and_then(|i| self.nt_to_nullable_rules_index_offsets.get(i)).copied().unwrap_or(0);
+    //     Some(start..end)
+    // }
     pub(crate) fn query_nt(&self, nt: u32) -> Option<std::ops::Range<usize>> {
         let nt = nt as usize;
         // println!("{nt:?} {:?}", self.nt_index);

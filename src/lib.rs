@@ -215,6 +215,7 @@ fn matched_rule<'a, 'c, Symbol: CfgSymbol + PartialEq>(
                     &trace[..i],
                     part,
                 ));
+                trace = &trace[..i];
                 src = &src[..start - offset];
                 let i = trace.partition_point(|(_, match_end, _)| match_end <= start);
                 trace = &trace[..i];

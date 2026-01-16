@@ -1,4 +1,3 @@
-use core::sync;
 use std::borrow::Borrow;
 
 use crate::buffer_pair::{BufferPair, Transfer};
@@ -83,11 +82,11 @@ pub fn parse_earley<'c, Symbol: super::CfgSymbol + Ord>(
     // to revisit that
     let mut completions = Completions::new(src.len());
 
-    for cursor in 0..src.len() {
+    for (cursor, input_symbol) in src.iter().enumerate() {
         // println!("{cursor}@{states:?}");
         let mut step = EarleyStep {
             cfg,
-            input_symbol: &src[cursor],
+            input_symbol,
             // The states for the next character get accumulated here, they'll need to be deduplicated
             // before we actually process the next character
             next_states,
